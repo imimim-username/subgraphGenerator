@@ -346,56 +346,56 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 1. ABI Utilities
 
-- [ ] In `abi/utils.py`:
-  - [ ] Functions to:
+- [x] In `abi/utils.py`:
+  - [x] Functions to:
     - Parse ABI JSON (list[dict]).
     - Extract events and their parameters.
     - Map Solidity types to Graph/AssemblyScript types.
 
 #### 2. ABI Sources: Local & Paste
 
-- [ ] In `abi/local.py`:
-  - [ ] `load_abi_from_file(path: Path) -> list[dict]`.
+- [x] In `abi/local.py`:
+  - [x] `load_abi_from_file(path: Path) -> list[dict]`.
 
-- [ ] In `abi/paste.py`:
-  - [ ] `load_abi_from_paste(text: str) -> list[dict]`.
-  - [ ] Implement a multi-line paste mechanism:
+- [x] In `abi/paste.py`:
+  - [x] `load_abi_from_paste(text: str) -> list[dict]`.
+  - [x] Implement a multi-line paste mechanism:
     - Prompt user to paste ABI JSON (can be formatted across multiple lines).
     - Accept input until user enters `END` on a new line, or handle EOF (Ctrl+D / Ctrl+Z).
     - Parse the collected text as JSON and validate it's a valid ABI array.
 
 #### 3. Auto Schema with Real ABIs
 
-- [ ] Update `generate/schema.py`:
-  - [ ] Accept a mapping of `contract_name -> ABI`.
-  - [ ] For **auto mode**:
+- [x] Update `generate/schema.py`:
+  - [x] Accept a mapping of `contract_name -> ABI`.
+  - [x] For **auto mode**:
     - Generate one entity type per event, e.g. `EventName`.
     - Include fields for event params + metadata (block number, timestamp, tx hash).
 
-- [ ] Update `generate/mappings_auto.py`:
-  - [ ] Generate a handler per event that:
+- [x] Update `generate/mappings_auto.py`:
+  - [x] Generate a handler per event that:
     - Creates `EventName` entity.
     - Copies parameters into fields.
     - Sets metadata fields.
 
 #### 4. Orchestrator ABI Integration
 
-- [ ] In `generate/orchestrator.py`:
-  - [ ] For each `ContractConfig`:
+- [x] In `generate/orchestrator.py`:
+  - [x] For each `ContractConfig`:
     - Load ABI from `config.output_dir / "abis" / abi_path`.
     - Note: `abi_path` in `ContractConfig` should be just the filename (e.g., `"MyContract.json"`), not a full path.
     - Build `abi_map` for schema & mappings.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_abi_sources.py`:
+- [x] `tests/test_abi_sources.py`:
   - Local: good/bad file JSON.
   - Paste: good/bad JSON.
-- [ ] `tests/test_generate_schema_auto_with_abi.py`:
+- [x] `tests/test_generate_schema_auto_with_abi.py`:
   - Given a minimal ABI with one event, assert:
     - Generated schema contains `type EventName`.
     - Fields match event parameters.
-- [ ] `tests/test_generate_mappings_auto_with_abi.py`:
+- [x] `tests/test_generate_mappings_auto_with_abi.py`:
   - Check mapping contains a handler for the event, uses correct types and entity name.
 
 **PR:** _Wire ABI from file/paste into auto schema and mappings for basic subgraphs_

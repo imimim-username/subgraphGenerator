@@ -1,13 +1,19 @@
-"""Orchestrates the subgraph generation pipeline."""
+"""Orchestrates the subgraph generation pipeline.
+
+This module coordinates the full generation pipeline, loading ABIs
+and calling individual generators to create the complete subgraph project.
+"""
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from subgraph_wizard.config.model import SubgraphConfig
 from subgraph_wizard.generate.project_layout import prepare_project_structure
 from subgraph_wizard.generate.subgraph_yaml import render_subgraph_yaml
 from subgraph_wizard.generate.schema import render_schema
 from subgraph_wizard.generate.mappings_auto import render_all_mappings_auto
+from subgraph_wizard.abi.local import load_abi_from_file
 from subgraph_wizard.utils.fs_utils import safe_write
 
 logger = logging.getLogger(__name__)
@@ -35,6 +41,37 @@ def _log_dry_run_file(path: Path, content: str) -> None:
     logger.debug(f"[DRY RUN] Preview: {preview_display}")
 
 
+def _load_abi_map(config: SubgraphConfig, abis_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    """Load ABIs for all contracts in the configuration.
+    
+    Attempts to load ABI files from the abis directory. If an ABI file
+    doesn't exist, logs a warning and continues without it.
+    
+    Args:
+        config: Subgraph configuration.
+        abis_dir: Path to the abis directory.
+    
+    Returns:
+        Dictionary mapping contract names to their ABI data.
+    """
+    abi_map = {}
+    
+    for contract in config.contracts:
+        abi_path = abis_dir / contract.abi_path
+        
+        if abi_path.exists():
+            try:
+                abi = load_abi_from_file(abi_path)
+                abi_map[contract.name] = abi
+                logger.info(f"Loaded ABI for {contract.name} from {abi_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load ABI for {contract.name}: {e}")
+        else:
+            logger.debug(f"ABI file not found for {contract.name}: {abi_path}")
+    
+    return abi_map
+
+
 def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> None:
     """Generate a complete subgraph project from configuration.
     
@@ -42,9 +79,10 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
     the full pipeline:
     
     1. Prepares the project directory structure
-    2. Renders subgraph.yaml manifest
-    3. Renders schema.graphql
-    4. Renders mapping files (based on mappings_mode)
+    2. Loads ABIs from the abis directory
+    3. Renders subgraph.yaml manifest
+    4. Renders schema.graphql
+    5. Renders mapping files (based on mappings_mode)
     
     Args:
         config: Validated subgraph configuration.
@@ -64,15 +102,24 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
     if not dry_run:
         paths = prepare_project_structure(config)
         root_dir = paths["root_dir"]
+        abis_dir = paths["abis_dir"]
     else:
         root_dir = Path(config.output_dir)
+        abis_dir = root_dir / "abis"
         logger.info(f"[DRY RUN] Would create directory structure in: {root_dir}")
         logger.info(f"[DRY RUN] Would create: {root_dir}/abis/")
         logger.info(f"[DRY RUN] Would create: {root_dir}/src/")
         logger.info(f"[DRY RUN] Would create: {root_dir}/src/mappings/")
     
-    # Step 2: Render and write subgraph.yaml
-    subgraph_yaml_content = render_subgraph_yaml(config)
+    # Step 2: Load ABIs
+    abi_map = _load_abi_map(config, abis_dir)
+    if abi_map:
+        logger.info(f"{mode_str}Loaded ABIs for {len(abi_map)} contracts")
+    else:
+        logger.info(f"{mode_str}No ABIs found, using placeholder entities and handlers")
+    
+    # Step 3: Render and write subgraph.yaml
+    subgraph_yaml_content = render_subgraph_yaml(config, abi_map)
     subgraph_yaml_path = root_dir / "subgraph.yaml"
     
     if dry_run:
@@ -81,8 +128,8 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
         safe_write(subgraph_yaml_path, subgraph_yaml_content)
         logger.info(f"Generated: {subgraph_yaml_path}")
     
-    # Step 3: Render and write schema.graphql
-    schema_content = render_schema(config)
+    # Step 4: Render and write schema.graphql
+    schema_content = render_schema(config, abi_map)
     schema_path = root_dir / "schema.graphql"
     
     if dry_run:
@@ -91,9 +138,9 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
         safe_write(schema_path, schema_content)
         logger.info(f"Generated: {schema_path}")
     
-    # Step 4: Render and write mapping files
+    # Step 5: Render and write mapping files
     if config.mappings_mode == "auto":
-        mappings = render_all_mappings_auto(config)
+        mappings = render_all_mappings_auto(config, abi_map)
         
         for contract_name, mapping_content in mappings.items():
             mapping_path = root_dir / "src" / "mappings" / f"{contract_name}.ts"
