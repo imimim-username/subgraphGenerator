@@ -1,0 +1,695 @@
+
+# Subgraph Wizard – Development Roadmap & Checklist
+
+This document is a **step-by-step development checklist** for building the Subgraph Wizard tool.
+
+- It assumes the architecture and structure described in `README.md` and `architecture.md`.
+- It is organized into **milestones**, each delivering a **thin, working slice**.
+- Each milestone contains:
+  - Suggested **branch name**
+  - Scope
+  - Detailed tasks as **checklists**
+  - Tests & acceptance criteria
+  - Notes on complexity level: **basic → intermediate → advanced**
+
+Developers can work through this in order, opening PRs per milestone (or grouping adjacent ones if appropriate).
+
+---
+
+## Conventions
+
+- **Branch naming**: `feature/<short-description>`  
+  e.g. `feature/cli-skeleton`, `feature/basic-generation-auto`.
+- **PR titles**: Use imperative, e.g. _"Add basic config model and validation"_.
+- **Testing**: Use `pytest` as the primary test runner.
+- **Python version**: Target Python **3.10+** (adjust if needed in `pyproject.toml`).
+- **Config versioning**: `config_version` is an integer field used to evolve `subgraph-config.json` over time.
+- **Error types**: Use a small hierarchy of custom exceptions (see Milestone 1).
+
+---
+
+## Milestone 0 – Repo Initialization & Skeleton
+
+**Goal:** Create a clean, minimal Python project skeleton that matches the high-level architecture, without implementing real logic.
+
+**Branch:** `feature/init-repo-structure`
+
+### Tasks
+
+- [ ] Initialize a new Git repository.
+- [ ] Add a minimal `pyproject.toml` with:
+  - [ ] Project metadata (name, version `"0.1.0"`, description).
+  - [ ] `requires-python = ">=3.10"`.
+  - [ ] Empty `[project.dependencies]` (to be filled later).
+  - [ ] Placeholder console script:
+
+    ```toml
+    [project.scripts]
+    subgraph-wizard = "subgraph_wizard.main:run"
+    ```
+
+- [ ] Create directory layout:
+
+  ```text
+  subgraph-wizard/
+  ├── src/subgraph_wizard/
+  ├── templates/
+  ├── docs/
+  ├── tests/
+  ├── examples/
+  ├── .gitignore
+  ├── README.md
+  └── .env.example
+  ```
+
+- [ ] Populate `src/subgraph_wizard/` with empty modules (each file just imports `logging` and defines a placeholder docstring):
+
+  - [ ] `__init__.py`
+  - [ ] `main.py`
+  - [ ] `cli.py`
+  - [ ] `interactive_wizard.py`
+  - [ ] `networks.py`
+  - [ ] `logging_setup.py`
+  - [ ] `config/__init__.py`, `config/model.py`, `config/io.py`, `config/validation.py`
+  - [ ] `abi/__init__.py`, `abi/local.py`, `abi/paste.py`, `abi/etherscan.py`, `abi/utils.py`
+  - [ ] `generate/__init__.py`, `generate/orchestrator.py`, `generate/project_layout.py`, `generate/subgraph_yaml.py`, `generate/schema.py`, `generate/mappings_stub.py`, `generate/mappings_auto.py`, `generate/package_json.py`, `generate/readme.py`
+  - [ ] `utils/fs_utils.py`, `utils/templating.py`, `utils/prompts_utils.py`
+
+- [ ] Add basic `.gitignore` (venv, `__pycache__`, `.env`, `.DS_Store`, etc.).
+- [ ] Add empty placeholder files in `docs/` and `templates/` (to be fleshed out later).
+- [ ] Copy in the generated `README.md` and `docs/architecture.md` (or placeholders if not yet committed).
+
+### Tests / Acceptance Criteria
+
+- [ ] Add `tests/test_smoke_imports.py` that imports key modules (e.g. `subgraph_wizard.main`) without error.
+- [ ] `python -m subgraph_wizard` runs without throwing (even if it only prints “Not implemented yet.”).
+
+**PR:** _Initialize repository structure and placeholders_
+
+---
+
+## Milestone 1 – Logging, Error Types & CLI Skeleton (Basic)
+
+**Goal:** Provide a working CLI entrypoint with logging and a basic error-handling strategy.
+
+**Branch:** `feature/cli-and-logging-skeleton`
+
+### Tasks
+
+#### 1. Custom Error Types
+
+- [ ] Create a new module `src/subgraph_wizard/errors.py` with:
+
+  - [ ] `class SubgraphWizardError(Exception): ...`
+  - [ ] `class ValidationError(SubceptionError): ...`  # Typo here, will be fixed in review
+  - [ ] `class AbiFetchError(SubgraphWizardError): ...`
+  - [ ] (Optional) other specific subclasses as needed later.
+
+#### 2. Logging Setup
+
+- [ ] Implement `logging_setup.py`:
+  - [ ] `setup_logging(level: str = "INFO") -> logging.Logger`.
+  - [ ] Read `LOG_LEVEL` from environment, fallback to `"INFO"`.
+  - [ ] Configure a simple console handler.
+  - [ ] Avoid logging any environment variable whose name contains `"KEY"` or `"TOKEN"` (defensive measure).
+
+#### 3. CLI & Main
+
+- [ ] Implement `cli.py` with:
+
+  - [ ] `parse_args(argv)` that defines:
+    - `--config` (optional path to config JSON).
+    - `--generate` (flag).
+    - `--dry-run` (flag).
+    - `--version` (flag).
+  - [ ] `run_from_args(args)` that for now:
+    - Logs which mode is requested.
+    - If `--version`, prints version and returns.
+
+- [ ] Implement `main.py`:
+
+  - [ ] `run()`:
+    - Calls `setup_logging`.
+    - Calls `parse_args(sys.argv[1:])`.
+    - Wraps `run_from_args(args)` in a `try/except SubgraphWizardError`:
+      - On error: print friendly message, exit non-zero, no full traceback unless `DEBUG` env var is set.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_cli.py`:
+  - Parse combinations of flags and assert on resulting `Namespace`.
+- [ ] Manual: `subgraph-wizard --help`, `--version` run without errors.
+- [ ] Manual: Trigger a synthetic `SubgraphWizardError` in `run_from_args` and verify the CLI shows a clean error message.
+
+**PR:** _Add logging, error hierarchy, and base CLI skeleton_
+
+---
+
+## Milestone 2 – Config Model, IO & Validation (Basic)
+
+**Goal:** Define the `SubgraphConfig` data model, read/write `subgraph-config.json`, and validate it strictly.
+
+**Branch:** `feature/config-model-io-validation`
+
+### Tasks
+
+#### 1. Config Model
+
+- [ ] In `config/model.py`, define dataclasses (or Pydantic models if you choose) for:
+
+  - [ ] `ContractConfig`:
+    - `name: str`
+    - `address: str`
+    - `start_block: int`
+    - `abi_path: str`
+    - `index_events: bool = True`
+
+  - [ ] `SubgraphConfig`:
+    - `config_version: int` (default `1`).
+    - `name: str`
+    - `network: str`
+    - `output_dir: str`
+    - `complexity: str` (start with `"basic"` only).
+    - `mappings_mode: str` (`"stub"` or `"auto"`).
+    - `contracts: list[ContractConfig]`
+
+#### 2. Config IO
+
+- [ ] In `config/io.py`:
+
+  - [ ] `load_config(path: Path) -> SubgraphConfig`:
+    - Read JSON.
+    - Validate required fields exist.
+    - Construct and return `SubgraphConfig`.
+
+  - [ ] `save_config(config: SubgraphConfig, path: Path) -> None`:
+    - Serialize to JSON.
+    - Include `config_version`.
+
+#### 3. Network Metadata & Validation
+
+- [ ] In `networks.py`:
+
+  - [ ] Define `SUPPORTED_NETWORKS` mapping, e.g.:
+
+    ```python
+    SUPPORTED_NETWORKS = {
+        "ethereum": {"explorer": "api.etherscan.io"},
+        "optimism": {"explorer": "api-optimistic.etherscan.io"},
+        "arbitrum": {"explorer": "api.arbiscan.io"},
+    }
+    ```
+
+- [ ] In `config/validation.py`:
+
+  - [ ] `validate_config(config: SubgraphConfig) -> None` that:
+    - Checks `config.config_version == 1`.
+    - Checks `config.network` in `SUPPORTED_NETWORKS`.
+    - Validates each `address` as `0x` + 40 hex chars.
+    - Ensures `mappings_mode` is `"stub"` or `"auto"`.
+    - For now, ensures `complexity == "basic"` (intermediate/advanced to be added later).
+    - Raises `ValidationError` on any issue with a clear message.
+
+#### 4. Integrate in CLI
+
+- [ ] In `cli.py`, update `run_from_args`:
+
+  - [ ] If `--config` is provided:
+    - Load config via `load_config`.
+    - Call `validate_config`.
+    - Log success or raise `ValidationError` on failure.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_config_io.py`:
+  - Round-trip: create a `SubgraphConfig` in code → save → load → compare fields.
+- [ ] `tests/test_validation.py`:
+  - Valid config passes.
+  - Various invalid configs produce `ValidationError` with expected messages.
+- [ ] Manual: create a simple `subgraph-config.json` by hand and verify `subgraph-wizard --config <file>` validates it.
+
+**PR:** _Add config model, IO, network metadata, and basic validation_
+
+---
+
+## Milestone 3 – Basic Generation Pipeline (Auto Mode Only)
+
+**Goal:** Implement a minimal generation pipeline for **basic complexity** with **auto mappings only**, from a valid config.
+
+This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `schema.graphql`, one simple mapping.
+
+**Branch:** `feature/basic-generation-auto`
+
+### Tasks
+
+#### 1. FS Utilities & Project Layout
+
+- [ ] In `utils/fs_utils.py`:
+
+  - [ ] `ensure_dir(path: Path)` – create directory if missing.
+  - [ ] `safe_write(path: Path, content: str)` – write text safely (temp file → rename).
+
+- [ ] In `generate/project_layout.py`:
+
+  - [ ] Implement `prepare_project_structure(config: SubgraphConfig) -> dict` returning paths to:
+    - `root_dir`
+    - `abis_dir`
+    - `src_dir`
+    - `mappings_dir`
+
+  - [ ] Create these directories under `config.output_dir`.
+
+#### 2. Templating Engine
+
+- [ ] Add Jinja2 to `pyproject.toml` dependencies.
+- [ ] In `utils/templating.py`:
+  - [ ] `get_template_env()` – returns a Jinja2 environment pointing to `templates/`.
+  - [ ] `render_template(template_name: str, context: dict) -> str`.
+
+#### 3. Minimal Templates
+
+- [ ] Create basic versions of:
+
+  - [ ] `templates/subgraph.yaml.j2`
+  - [ ] `templates/schema/base_schema.graphql.j2` (can be empty or minimal)
+  - [ ] `templates/mappings/common_header.ts.j2`
+  - [ ] `templates/mappings/mapping_auto.ts.j2` (for a single event/entity to start)
+
+#### 4. Generators (MVP)
+
+- [ ] In `generate/subgraph_yaml.py`:
+  - [ ] Implement `render_subgraph_yaml(config: SubgraphConfig) -> str`:
+    - Use a simplified data source model: one mapping file per contract, basic event handler placeholder.
+
+- [ ] In `generate/schema.py`:
+  - [ ] Implement a **very basic** auto schema:
+    - For now, you can define a single `ExampleEntity` with fixed fields as a placeholder (will be replaced later once ABI logic is connected).
+
+- [ ] In `generate/mappings_auto.py`:
+  - [ ] Implement generation of a single trivial mapping file per contract:
+    - Use `common_header.ts.j2` + `mapping_auto.ts.j2`.
+    - For now, the handler can just log or set a minimal placeholder (e.g., using a dummy event type); this will be improved once ABI is wired in.
+
+- [ ] In `generate/orchestrator.py`:
+  - [ ] Implement `generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False)`:
+    - Prepare project layout.
+    - Render `subgraph.yaml`, `schema.graphql`, and basic mapping files.
+    - If `dry_run`, log what would be written instead of writing.
+
+#### 5. CLI Integration
+
+- [ ] In `cli.py`:
+  - [ ] On `--generate`:
+    - Load + validate config.
+    - Call `generate_subgraph_project(config, dry_run=args.dry_run)`.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_generate_project_layout.py`:
+  - Ensures directories are created correctly.
+- [ ] `tests/test_generate_subgraph_yaml.py`:
+  - For a sample config, check YAML contains correct network and contract names.
+- [ ] `tests/test_basic_generation_flow.py`:
+  - Use a sample `SubgraphConfig` in code.
+  - Generate into a temp directory.
+  - Assert that `subgraph.yaml`, `schema.graphql`, and at least one mapping file exist.
+
+**PR:** _Implement basic generation pipeline for auto mode MVP_
+
+---
+
+## Milestone 4 – ABI Acquisition (File & Paste) and Auto Schema
+
+**Goal:** Connect ABIs to the generation pipeline for **basic complexity**, still focusing on **auto mode**, using local and pasted ABIs.
+
+**Branch:** `feature/abi-file-paste-auto-schema`
+
+### Tasks
+
+#### 1. ABI Utilities
+
+- [ ] In `abi/utils.py`:
+  - [ ] Functions to:
+    - Parse ABI JSON (list[dict]).
+    - Extract events and their parameters.
+    - Map Solidity types to Graph/AssemblyScript types.
+
+#### 2. ABI Sources: Local & Paste
+
+- [ ] In `abi/local.py`:
+  - [ ] `load_abi_from_file(path: Path) -> list[dict]`.
+
+- [ ] In `abi/paste.py`:
+  - [ ] `load_abi_from_paste(text: str) -> list[dict]`.
+
+#### 3. Auto Schema with Real ABIs
+
+- [ ] Update `generate/schema.py`:
+  - [ ] Accept a mapping of `contract_name -> ABI`.
+  - [ ] For **auto mode**:
+    - Generate one entity type per event, e.g. `EventName`.
+    - Include fields for event params + metadata (block number, timestamp, tx hash).
+
+- [ ] Update `generate/mappings_auto.py`:
+  - [ ] Generate a handler per event that:
+    - Creates `EventName` entity.
+    - Copies parameters into fields.
+    - Sets metadata fields.
+
+#### 4. Orchestrator ABI Integration
+
+- [ ] In `generate/orchestrator.py`:
+  - [ ] For each `ContractConfig`:
+    - Load ABI from `config.output_dir / abi_path`.
+    - Build `abi_map` for schema & mappings.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_abi_sources.py`:
+  - Local: good/bad file JSON.
+  - Paste: good/bad JSON.
+- [ ] `tests/test_generate_schema_auto_with_abi.py`:
+  - Given a minimal ABI with one event, assert:
+    - Generated schema contains `type EventName`.
+    - Fields match event parameters.
+- [ ] `tests/test_generate_mappings_auto_with_abi.py`:
+  - Check mapping contains a handler for the event, uses correct types and entity name.
+
+**PR:** _Wire ABI from file/paste into auto schema and mappings for basic subgraphs_
+
+---
+
+## Milestone 5 – Etherscan/Explorer ABI Fetch (Basic)
+
+**Goal:** Add an optional ABI source from Etherscan-compatible explorers for basic complexity / auto mode.
+
+**Branch:** `feature/abi-etherscan-basic`
+
+### Tasks
+
+- [ ] Update `.env.example`:
+
+  - [ ] Add:
+    - `ETHERSCAN_API_KEY=`
+    - `OPTIMISM_ETHERSCAN_API_KEY=`
+    - `ARBITRUM_ETHERSCAN_API_KEY=`
+
+- [ ] In `abi/etherscan.py`:
+
+  - [ ] Implement `fetch_abi_from_explorer(network: str, address: str) -> list[dict]`:
+    - Use `SUPPORTED_NETWORKS[network]["explorer"]`.
+    - Read relevant API key from environment.
+    - Use short timeouts.
+    - On error (rate limit, unverifed contract), raise `AbiFetchError` with a **sanitized** message (no API key, no full URL with query params).
+
+- [ ] Provide a helper function that can be called later by the wizard.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_abi_etherscan.py`:
+  - Use `unittest.mock` or similar to mock `requests.get`.
+  - Test success path (valid ABI JSON string in `result`).
+  - Test error path (status `"0"` with error message).
+
+**PR:** _Add Etherscan-compatible ABI fetch support for basic mode_
+
+---
+
+## Milestone 6 – Interactive Wizard (Basic Config + ABI Choice)
+
+**Goal:** Implement the interactive wizard for **basic complexity**, letting the user define contracts and choose ABI sources (file, paste, Etherscan).
+
+**Branch:** `feature/interactive-wizard-basic`
+
+### Tasks
+
+- [ ] In `utils/prompts_utils.py`:
+  - [ ] Implement helper functions:
+    - `ask_string(prompt, default=None)`
+    - `ask_choice(prompt, options: list[str], default_index=0)`
+    - `ask_yes_no(prompt, default=True)`
+
+- [ ] In `interactive_wizard.py`:
+  - [ ] Implement `run_wizard() -> SubgraphConfig`:
+    - Ask for:
+      - Subgraph name.
+      - Network (from `SUPPORTED_NETWORKS`).
+      - Output directory (default = name).
+      - Complexity (for now, **force `basic`** – record it explicitly).
+      - Mapping mode (`stub` vs `auto`; if `stub` not fully implemented yet, show a warning and allow but only stub generation later).
+    - Contract entry loop:
+      - For each contract:
+        - Name, address, start block.
+        - ABI source:
+          - 1) Local file
+          - 2) Paste JSON
+          - 3) Fetch from explorer
+        - Use appropriate `abi/` module.
+        - Write ABI to `output_dir/abis/<ContractName>.json`.
+        - Set `abi_path` in `ContractConfig`.
+    - Build `SubgraphConfig`.
+    - Call `validate_config`.
+    - Save to `<output_dir>/subgraph-config.json`.
+
+- [ ] In `main.run()` / `cli.run_from_args()`:
+  - [ ] If no `--config` and no `--generate`, run the wizard and then optionally ask the user if they want to generate immediately.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_interactive_wizard_basic.py`:
+  - Use `monkeypatch` to simulate input and `tmp_path` for `output_dir`.
+  - Assert a `SubgraphConfig` is built and saved.
+  - Assert ABI files are written.
+
+**PR:** _Add interactive wizard for basic complexity and ABI acquisition_
+
+---
+
+## Milestone 7 – Stub Mappings, Package.json, and Generated README (Basic)
+
+**Goal:** Complete the **basic complexity** feature set by adding stub mappings, `package.json`, and per-subgraph README.
+
+**Branch:** `feature/basic-stub-mappings-and-metadata`
+
+### Tasks
+
+#### 1. Stub Mappings
+
+- [ ] In `templates/mappings/mapping_stub.ts.j2`:
+  - [ ] Create a template that:
+    - Imports event types.
+    - Declares handler functions with TODO comments.
+
+- [ ] In `generate/mappings_stub.py`:
+  - [ ] Given ABI info, generate stubs for each event.
+  - [ ] Ensure naming conventions match `schema.graphql` types (even if stubbed).
+
+#### 2. Package.json
+
+- [ ] In `templates/package.json.j2`:
+  - [ ] Fill in typical subgraph/mappings dependencies and scripts (`codegen`, `build`).
+
+- [ ] In `generate/package_json.py`:
+  - [ ] Render `package.json` using config data where appropriate (e.g., name).
+
+#### 3. Generated Subgraph README
+
+- [ ] In `templates/README.generated.md.j2`:
+  - [ ] A template explaining:
+    - Network.
+    - Contracts.
+    - How to install dependencies.
+    - Commands to run `graph codegen` and `graph build`.
+
+- [ ] In `generate/readme.py`:
+  - [ ] Render this template for each generated subgraph.
+
+#### 4. Orchestrator Integration
+
+- [ ] Update `generate/orchestrator.py`:
+  - [ ] If `mappings_mode == "stub"`, use stub generator.
+  - [ ] Generate `package.json` and README in all cases.
+
+### Tests / Acceptance Criteria
+
+- [ ] `tests/test_generate_mappings_stub.py`:
+  - Check that stub handlers exist for expected events and contain TODO comments.
+- [ ] `tests/test_generate_package_json.py`:
+  - Load `package.json` and assert required fields and dependencies.
+- [ ] `tests/test_generate_readme.py`:
+  - Assert network and contract names appear in generated README.
+
+**PR:** _Add stub mappings, package.json, and generated subgraph README for basic complexity_
+
+---
+
+## Milestone 8 – End-to-End Basic Mode & Semantic Tests
+
+**Goal:** Validate the **full basic pipeline** (config → wizard → generate → subgraph) with robust tests.
+
+**Branch:** `feature/basic-end-to-end-tests`
+
+### Tasks
+
+- [ ] Add `tests/fixtures/basic_config.json` and sample ABI(s).
+- [ ] In `tests/test_full_generation_basic.py`:
+  - [ ] Load fixture config.
+  - [ ] Run `generate_subgraph_project` into a temp directory.
+  - [ ] Assertions:
+    - Check that key files exist (`subgraph.yaml`, `schema.graphql`, mappings, `package.json`, README).
+    - For `subgraph.yaml`, parse YAML and assert:
+      - Correct network.
+      - Correct dataSources.
+    - For `schema.graphql`, parse as text and assert presence of known entity names and fields (not full byte-by-byte match).
+    - For mappings, assert presence of key function names and types.
+
+- [ ] Manually run the tool:
+  - [ ] `subgraph-wizard` → use wizard to create a basic config and generate a subgraph.
+  - [ ] Validate with `graph codegen` and `graph build` (if Graph CLI is installed).
+
+**PR:** _Add end-to-end generation tests for basic complexity_
+
+---
+
+## Milestone 9 – Introduce “Intermediate” Complexity
+
+**Goal:** Extend the config and generation pipeline to support **intermediate complexity** (e.g., call handlers and/or block handlers), without breaking basic behavior.
+
+**Branch:** `feature/intermediate-complexity-support`
+
+### Tasks
+
+#### 1. Config Extensions
+
+- [ ] In `config/model.py`:
+  - [ ] Extend `SubgraphConfig` with optional fields for:
+    - Call handlers (e.g., list of functions per contract).
+    - Block handlers (e.g., bool or frequency).
+  - [ ] Bump `config_version` to `2` for new configs.
+  - [ ] Decide on strategy for old configs:
+    - Either migrate version 1 → 2 in `config/io`, or
+    - Accept both versions in `validation` with clear rules.
+
+- [ ] In `config/validation.py`:
+  - [ ] Validate intermediate-only fields only when `complexity == "intermediate"`.
+
+#### 2. Wizard Updates
+
+- [ ] In `interactive_wizard.py`:
+  - [ ] Allow user to choose `complexity = "basic" | "intermediate"`.
+  - [ ] If `intermediate`:
+    - Ask whether to enable call handlers, block handlers, or both.
+    - For call handlers, ask which functions by name or signature.
+    - Populate intermediate-specific config fields.
+
+#### 3. Generators
+
+- [ ] In `generate/subgraph_yaml.py`:
+  - [ ] Use intermediate fields to:
+    - Add `callHandlers` and/or `blockHandlers` entries under relevant dataSources.
+
+- [ ] In mapping generators:
+  - [ ] Generate stub or auto handlers (depending on `mappings_mode`) for these call/block handlers.
+  - [ ] For intermediate, it’s fine if logic is largely stubbed with TODOs initially.
+
+### Tests / Acceptance Criteria
+
+- [ ] Extend `tests/test_validation.py` for intermediate fields.
+- [ ] `tests/test_generate_subgraph_yaml_intermediate.py`:
+  - Assert that `callHandlers` or `blockHandlers` appear in `subgraph.yaml` when expected.
+- [ ] Ensure all basic tests (Milestones 0–8) still pass.
+
+**PR:** _Add intermediate complexity support for call/block handlers_
+
+---
+
+## Milestone 10 – Introduce “Advanced” Complexity
+
+**Goal:** Add **advanced complexity**, such as dynamic data sources, templates, and multi-contract relationships, while preserving basic & intermediate flows.
+
+**Branch:** `feature/advanced-complexity-support`
+
+### Tasks
+
+This milestone is intentionally more flexible and should be guided by your real advanced use cases.
+
+- [ ] Extend `SubgraphConfig` to model advanced concepts:
+  - Dynamic data sources and templates.
+  - Potential relationships between entities and multiple contracts.
+- [ ] Extend wizard to:
+  - Offer `complexity = "advanced"`.
+  - Collect required advanced options in a manageable way.
+
+- [ ] Extend generators:
+  - `generate/subgraph_yaml.py`:
+    - Add `templates` and `dynamicDataSources` sections.
+  - Mapping generators:
+    - Add mapping code needed to instantiate and manage dynamic data sources.
+
+- [ ] Update docs:
+  - `docs/config-format.md` – advanced fields.
+  - `docs/user-guide.md` – examples of advanced configs.
+
+### Tests / Acceptance Criteria
+
+- [ ] Add advanced fixtures in `tests/fixtures/`.
+- [ ] Add `tests/test_generate_subgraph_yaml_advanced.py` and similar mapping tests.
+- [ ] Add an advanced end-to-end test (semantic checks only, as with basic and intermediate).
+
+**PR:** _Add advanced complexity, templates, and dynamic data source support_
+
+---
+
+## Milestone 11 – Documentation & Polish
+
+**Goal:** Make sure the implementation fully aligns with `README.md`, `architecture.md`, and provides a smooth developer/user experience.
+
+**Branch:** `feature/docs-and-polish`
+
+### Tasks
+
+- [ ] Update `README.md`:
+  - [ ] Add “Quickstart” section (install, basic example).
+  - [ ] Show both interactive wizard and config-driven workflows.
+- [ ] Update `docs/architecture.md` if anything changed vs original plan.
+- [ ] Flesh out:
+  - [ ] `docs/user-guide.md` – detailed usage.
+  - [ ] `docs/config-format.md` – config schema for all complexity levels.
+  - [ ] `docs/development-notes.md` – contributing guidelines, branch/PR conventions, how to run tests/CI.
+
+- [ ] Confirm `.env.example` contains all relevant env vars actually used in code.
+- [ ] Optionally add CI configuration (e.g., GitHub Actions) to:
+  - Run `pytest`.
+  - (Optionally) run linting/formatting.
+
+### Tests / Acceptance Criteria
+
+- [ ] Manual walkthrough:
+  - Fresh clone of repo.
+  - Follow `README` Quickstart end-to-end.
+  - Confirm all steps work.
+- [ ] CI passes (if configured).
+
+**PR:** _Align documentation, examples, and polish with the final implementation_
+
+---
+
+## How to Use This Checklist
+
+- Treat each **milestone** as a high-level goal with one or more PRs.
+- Ensure each PR delivers a **testable slice**:
+  - New code.
+  - New or updated tests.
+  - Clear acceptance criteria met.
+- Regularly compare the current implementation against:
+  - `README.md`
+  - `docs/architecture.md`
+- Adjust future milestones if real-world needs evolve, while keeping the same overall structure and quality goals.
+
+By following this roadmap, you should end up with a **robust, well-architected Subgraph Wizard** that supports:
+
+- **Basic** subgraphs (events → entities, auto/stub).
+- **Intermediate** features (call/block handlers).
+- **Advanced** features (dynamic data sources, templates, relationships),
+
+with a clean internal design, strong tests, and professional documentation.
