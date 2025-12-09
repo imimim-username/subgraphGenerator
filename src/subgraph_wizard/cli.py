@@ -6,6 +6,7 @@ from pathlib import Path
 
 from subgraph_wizard.config.io import load_config
 from subgraph_wizard.config.validation import validate_config
+from subgraph_wizard.generate.orchestrator import generate_subgraph_project
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,9 @@ def run_from_args(args):
         if config is None:
             logger.warning("--generate requires --config. Please provide a configuration file.")
             return
-        logger.info("Generation functionality will be implemented in a future milestone.")
+        
+        # Run the generation pipeline
+        generate_subgraph_project(config, dry_run=args.dry_run)
     else:
         if not args.config:
             logger.info("Interactive wizard will be implemented in a future milestone.")
