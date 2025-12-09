@@ -259,55 +259,55 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 1. FS Utilities & Project Layout
 
-- [ ] In `utils/fs_utils.py`:
+- [x] In `utils/fs_utils.py`:
 
-  - [ ] `ensure_dir(path: Path)` – create directory if missing.
-  - [ ] `safe_write(path: Path, content: str)` – write text safely (temp file → rename).
+  - [x] `ensure_dir(path: Path)` – create directory if missing.
+  - [x] `safe_write(path: Path, content: str)` – write text safely (temp file → rename).
 
-- [ ] In `generate/project_layout.py`:
+- [x] In `generate/project_layout.py`:
 
-  - [ ] Implement `prepare_project_structure(config: SubgraphConfig) -> dict` returning paths to:
+  - [x] Implement `prepare_project_structure(config: SubgraphConfig) -> dict` returning paths to:
     - `root_dir`
     - `abis_dir`
     - `src_dir`
     - `mappings_dir`
 
-  - [ ] Create these directories under `config.output_dir`.
+  - [x] Create these directories under `config.output_dir`.
 
 #### 2. Templating Engine
 
-- [ ] Add Jinja2 to `pyproject.toml` dependencies.
-- [ ] In `utils/templating.py`:
-  - [ ] `get_template_env()` – returns a Jinja2 environment pointing to `templates/`.
+- [x] Add Jinja2 to `pyproject.toml` dependencies.
+- [x] In `utils/templating.py`:
+  - [x] `get_template_env()` – returns a Jinja2 environment pointing to `templates/`.
     - Template directory should be resolved relative to the package root: `Path(__file__).parent.parent.parent / "templates"`.
-  - [ ] `render_template(template_name: str, context: dict) -> str`.
+  - [x] `render_template(template_name: str, context: dict) -> str`.
 
 #### 3. Minimal Templates
 
-- [ ] Create basic versions of:
+- [x] Create basic versions of:
 
-  - [ ] `templates/subgraph.yaml.j2`
-  - [ ] `templates/schema/base_schema.graphql.j2` (can be empty or minimal)
-  - [ ] `templates/mappings/common_header.ts.j2`
-  - [ ] `templates/mappings/mapping_auto.ts.j2` (for a single event/entity to start)
+  - [x] `templates/subgraph.yaml.j2`
+  - [x] `templates/schema/base_schema.graphql.j2` (can be empty or minimal)
+  - [x] `templates/mappings/common_header.ts.j2`
+  - [x] `templates/mappings/mapping_auto.ts.j2` (for a single event/entity to start)
 
 #### 4. Generators (MVP)
 
-- [ ] In `generate/subgraph_yaml.py`:
-  - [ ] Implement `render_subgraph_yaml(config: SubgraphConfig) -> str`:
+- [x] In `generate/subgraph_yaml.py`:
+  - [x] Implement `render_subgraph_yaml(config: SubgraphConfig) -> str`:
     - Use a simplified data source model: one mapping file per contract, basic event handler placeholder.
 
-- [ ] In `generate/schema.py`:
-  - [ ] Implement a **very basic** auto schema:
+- [x] In `generate/schema.py`:
+  - [x] Implement a **very basic** auto schema:
     - For now, you can define a single `ExampleEntity` with fixed fields as a placeholder (will be replaced later once ABI logic is connected).
 
-- [ ] In `generate/mappings_auto.py`:
-  - [ ] Implement generation of a single trivial mapping file per contract:
+- [x] In `generate/mappings_auto.py`:
+  - [x] Implement generation of a single trivial mapping file per contract:
     - Use `common_header.ts.j2` + `mapping_auto.ts.j2`.
     - For now, the handler can just log or set a minimal placeholder (e.g., using a dummy event type); this will be improved once ABI is wired in.
 
-- [ ] In `generate/orchestrator.py`:
-  - [ ] Implement `generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False)`:
+- [x] In `generate/orchestrator.py`:
+  - [x] Implement `generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False)`:
     - Prepare project layout.
     - Render `subgraph.yaml`, `schema.graphql`, and basic mapping files.
     - If `dry_run`, log what would be written instead of writing:
@@ -316,18 +316,18 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 5. CLI Integration
 
-- [ ] In `cli.py`:
-  - [ ] On `--generate`:
+- [x] In `cli.py`:
+  - [x] On `--generate`:
     - Load + validate config.
     - Call `generate_subgraph_project(config, dry_run=args.dry_run)`.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_generate_project_layout.py`:
+- [x] `tests/test_generate_project_layout.py`:
   - Ensures directories are created correctly.
-- [ ] `tests/test_generate_subgraph_yaml.py`:
+- [x] `tests/test_generate_subgraph_yaml.py`:
   - For a sample config, check YAML contains correct network and contract names.
-- [ ] `tests/test_basic_generation_flow.py`:
+- [x] `tests/test_basic_generation_flow.py`:
   - Use a sample `SubgraphConfig` in code.
   - Generate into a temp directory.
   - Assert that `subgraph.yaml`, `schema.graphql`, and at least one mapping file exist.

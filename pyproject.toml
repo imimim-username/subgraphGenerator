@@ -3,7 +3,9 @@ name = "subgraph-wizard"
 version = "0.1.0"
 description = "A modular, extensible Python-based tool that interactively generates ready-to-deploy subgraph projects for The Graph"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "jinja2>=3.1.0",
+]
 
 [project.scripts]
 subgraph-wizard = "subgraph_wizard.main:run"
