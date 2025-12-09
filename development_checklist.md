@@ -70,6 +70,7 @@ Developers can work through this in order, opening PRs per milestone (or groupin
   - [ ] `interactive_wizard.py`
   - [ ] `networks.py`
   - [ ] `logging_setup.py`
+  - [ ] `errors.py`
   - [ ] `config/__init__.py`, `config/model.py`, `config/io.py`, `config/validation.py`
   - [ ] `abi/__init__.py`, `abi/local.py`, `abi/paste.py`, `abi/etherscan.py`, `abi/utils.py`
   - [ ] `generate/__init__.py`, `generate/orchestrator.py`, `generate/project_layout.py`, `generate/subgraph_yaml.py`, `generate/schema.py`, `generate/mappings_stub.py`, `generate/mappings_auto.py`, `generate/package_json.py`, `generate/readme.py`
@@ -101,7 +102,7 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 - [ ] Create a new module `src/subgraph_wizard/errors.py` with:
 
   - [ ] `class SubgraphWizardError(Exception): ...`
-  - [ ] `class ValidationError(SubceptionError): ...`  # Typo here, will be fixed in review
+  - [ ] `class ValidationError(SubgraphWizardError): ...`
   - [ ] `class AbiFetchError(SubgraphWizardError): ...`
   - [ ] (Optional) other specific subclasses as needed later.
 
@@ -194,11 +195,25 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
     ```python
     SUPPORTED_NETWORKS = {
-        "ethereum": {"explorer": "api.etherscan.io"},
-        "optimism": {"explorer": "api-optimistic.etherscan.io"},
-        "arbitrum": {"explorer": "api.arbiscan.io"},
+        "ethereum": {
+            "explorer": "api.etherscan.io",
+            "chain_id": 1,
+            "default_start_block": 0
+        },
+        "optimism": {
+            "explorer": "api-optimistic.etherscan.io",
+            "chain_id": 10,
+            "default_start_block": 0
+        },
+        "arbitrum": {
+            "explorer": "api.arbiscan.io",
+            "chain_id": 42161,
+            "default_start_block": 0
+        },
     }
     ```
+
+    Note: `chain_id` and `default_start_block` are optional metadata that may be useful for validation or documentation, but are not strictly required for basic functionality.
 
 - [ ] In `config/validation.py`:
 
@@ -264,6 +279,7 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 - [ ] Add Jinja2 to `pyproject.toml` dependencies.
 - [ ] In `utils/templating.py`:
   - [ ] `get_template_env()` – returns a Jinja2 environment pointing to `templates/`.
+    - Template directory should be resolved relative to the package root: `Path(__file__).parent.parent.parent / "templates"`.
   - [ ] `render_template(template_name: str, context: dict) -> str`.
 
 #### 3. Minimal Templates
@@ -294,7 +310,9 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
   - [ ] Implement `generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False)`:
     - Prepare project layout.
     - Render `subgraph.yaml`, `schema.graphql`, and basic mapping files.
-    - If `dry_run`, log what would be written instead of writing.
+    - If `dry_run`, log what would be written instead of writing:
+      - For each file, log: file path, file size (in bytes), and a preview of first ~200 characters.
+      - Use a consistent log format like: `[DRY RUN] Would write: <path> (<size> bytes)`.
 
 #### 5. CLI Integration
 
@@ -341,6 +359,10 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 - [ ] In `abi/paste.py`:
   - [ ] `load_abi_from_paste(text: str) -> list[dict]`.
+  - [ ] Implement a multi-line paste mechanism:
+    - Prompt user to paste ABI JSON (can be formatted across multiple lines).
+    - Accept input until user enters `END` on a new line, or handle EOF (Ctrl+D / Ctrl+Z).
+    - Parse the collected text as JSON and validate it's a valid ABI array.
 
 #### 3. Auto Schema with Real ABIs
 
@@ -360,7 +382,8 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 - [ ] In `generate/orchestrator.py`:
   - [ ] For each `ContractConfig`:
-    - Load ABI from `config.output_dir / abi_path`.
+    - Load ABI from `config.output_dir / "abis" / abi_path`.
+    - Note: `abi_path` in `ContractConfig` should be just the filename (e.g., `"MyContract.json"`), not a full path.
     - Build `abi_map` for schema & mappings.
 
 ### Tests / Acceptance Criteria
@@ -399,8 +422,12 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
   - [ ] Implement `fetch_abi_from_explorer(network: str, address: str) -> list[dict]`:
     - Use `SUPPORTED_NETWORKS[network]["explorer"]`.
     - Read relevant API key from environment.
-    - Use short timeouts.
-    - On error (rate limit, unverifed contract), raise `AbiFetchError` with a **sanitized** message (no API key, no full URL with query params).
+    - Use short timeouts (e.g., 10 seconds).
+    - On error (rate limit, unverified contract, network issues), raise `AbiFetchError` with a **sanitized** message:
+      - Do NOT include API key in error messages.
+      - Do NOT include full URLs with query parameters in error messages.
+      - Provide user-friendly messages like: "Failed to fetch ABI from explorer. Contract may not be verified, or API rate limit exceeded. Please check your API key or try using a local ABI file."
+      - Optionally log detailed error info at DEBUG level (with sanitization).
 
 - [ ] Provide a helper function that can be called later by the wizard.
 
@@ -436,17 +463,18 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
       - Network (from `SUPPORTED_NETWORKS`).
       - Output directory (default = name).
       - Complexity (for now, **force `basic`** – record it explicitly).
-      - Mapping mode (`stub` vs `auto`; if `stub` not fully implemented yet, show a warning and allow but only stub generation later).
+      - Mapping mode (`stub` vs `auto`):
+        - Note: Stub mode implementation begins in Milestone 7. If user selects `stub` in Milestone 6, allow the selection and save it in config, but warn: "Stub mappings will be generated in a future milestone. For now, only auto mode is fully functional."
     - Contract entry loop:
       - For each contract:
         - Name, address, start block.
         - ABI source:
           - 1) Local file
-          - 2) Paste JSON
+          - 2) Paste JSON (multi-line until `END` or EOF)
           - 3) Fetch from explorer
         - Use appropriate `abi/` module.
         - Write ABI to `output_dir/abis/<ContractName>.json`.
-        - Set `abi_path` in `ContractConfig`.
+        - Set `abi_path` in `ContractConfig` to just the filename: `"<ContractName>.json"` (relative to `abis/` directory).
     - Build `SubgraphConfig`.
     - Call `validate_config`.
     - Save to `<output_dir>/subgraph-config.json`.
@@ -487,7 +515,14 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 #### 2. Package.json
 
 - [ ] In `templates/package.json.j2`:
-  - [ ] Fill in typical subgraph/mappings dependencies and scripts (`codegen`, `build`).
+  - [ ] Fill in typical subgraph/mappings dependencies and scripts (`codegen`, `build`):
+    - Required dependencies:
+      - `@graphprotocol/graph-cli`: latest stable version
+      - `@graphprotocol/graph-ts`: latest stable version
+    - Scripts:
+      - `codegen`: `graph codegen`
+      - `build`: `graph build`
+      - `deploy`: `graph deploy --node <node-url> <subgraph-name>` (placeholder, user should customize)
 
 - [ ] In `generate/package_json.py`:
   - [ ] Render `package.json` using config data where appropriate (e.g., name).
@@ -562,13 +597,16 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 #### 1. Config Extensions
 
 - [ ] In `config/model.py`:
-  - [ ] Extend `SubgraphConfig` with optional fields for:
-    - Call handlers (e.g., list of functions per contract).
-    - Block handlers (e.g., bool or frequency).
-  - [ ] Bump `config_version` to `2` for new configs.
-  - [ ] Decide on strategy for old configs:
-    - Either migrate version 1 → 2 in `config/io`, or
-    - Accept both versions in `validation` with clear rules.
+  - [ ] Extend `ContractConfig` with optional fields for intermediate complexity:
+    - `call_handlers: list[str] | None = None` – list of function signatures or names to index (e.g., `["transfer(address,uint256)"]`).
+    - `block_handler: bool = False` – whether to index every block for this contract.
+  - [ ] Extend `SubgraphConfig` with optional intermediate complexity fields:
+    - Fields can be added at the top level or within `ContractConfig` (recommended: within `ContractConfig`).
+  - [ ] Bump `config_version` to `2` for new configs created with intermediate features.
+  - [ ] Config versioning strategy:
+    - Implement backward compatibility: accept both version 1 and version 2 configs in `config/validation.py`.
+    - When loading version 1 configs, initialize intermediate fields with defaults (empty lists, `False`).
+    - No automatic migration needed initially; version 1 configs remain valid and functional.
 
 - [ ] In `config/validation.py`:
   - [ ] Validate intermediate-only fields only when `complexity == "intermediate"`.
@@ -578,9 +616,13 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 - [ ] In `interactive_wizard.py`:
   - [ ] Allow user to choose `complexity = "basic" | "intermediate"`.
   - [ ] If `intermediate`:
-    - Ask whether to enable call handlers, block handlers, or both.
-    - For call handlers, ask which functions by name or signature.
-    - Populate intermediate-specific config fields.
+    - For each contract:
+      - Ask whether to enable call handlers: `ask_yes_no("Enable call handlers for this contract?")`.
+        - If yes, prompt for function signatures (comma-separated or one per line until empty line).
+        - Store as list in `ContractConfig.call_handlers`.
+      - Ask whether to enable block handlers: `ask_yes_no("Enable block handlers for this contract?")`.
+        - Store as boolean in `ContractConfig.block_handler`.
+    - Populate intermediate-specific config fields in each `ContractConfig`.
 
 #### 3. Generators
 
