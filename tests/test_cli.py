@@ -109,9 +109,30 @@ class TestRunFromArgs:
         # Should log interactive wizard mode
         assert mock_logger.info.called
 
+    @patch('subgraph_wizard.cli.validate_config')
+    @patch('subgraph_wizard.cli.load_config')
     @patch('subgraph_wizard.cli.logger')
-    def test_run_from_args_with_config(self, mock_logger):
+    def test_run_from_args_with_config(self, mock_logger, mock_load_config, mock_validate_config):
         """Test running with --config flag."""
+        from subgraph_wizard.config.model import SubgraphConfig, ContractConfig
+        
+        # Create a mock config to return
+        mock_config = SubgraphConfig(
+            name="test-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=[
+                ContractConfig(
+                    name="TestToken",
+                    address="0x1234567890123456789012345678901234567890",
+                    start_block=12345678,
+                    abi_path="TestToken.json"
+                )
+            ]
+        )
+        mock_load_config.return_value = mock_config
+        
         args = Namespace(
             config="test-config.json",
             generate=False,
@@ -122,6 +143,8 @@ class TestRunFromArgs:
         run_from_args(args)
         # Should log config mode
         assert mock_logger.info.called
+        mock_load_config.assert_called_once()
+        mock_validate_config.assert_called_once_with(mock_config)
 
     @patch('subgraph_wizard.cli.logger')
     def test_run_from_args_with_generate(self, mock_logger):
@@ -137,9 +160,30 @@ class TestRunFromArgs:
         # Should log generation mode
         assert mock_logger.info.called
 
+    @patch('subgraph_wizard.cli.validate_config')
+    @patch('subgraph_wizard.cli.load_config')
     @patch('subgraph_wizard.cli.logger')
-    def test_run_from_args_dry_run(self, mock_logger):
+    def test_run_from_args_dry_run(self, mock_logger, mock_load_config, mock_validate_config):
         """Test running with --dry-run flag."""
+        from subgraph_wizard.config.model import SubgraphConfig, ContractConfig
+        
+        # Create a mock config to return
+        mock_config = SubgraphConfig(
+            name="test-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=[
+                ContractConfig(
+                    name="TestToken",
+                    address="0x1234567890123456789012345678901234567890",
+                    start_block=12345678,
+                    abi_path="TestToken.json"
+                )
+            ]
+        )
+        mock_load_config.return_value = mock_config
+        
         args = Namespace(
             config="test.json",
             generate=True,
@@ -150,6 +194,8 @@ class TestRunFromArgs:
         run_from_args(args)
         # Should log dry-run mode
         assert mock_logger.info.called
+        mock_load_config.assert_called_once()
+        mock_validate_config.assert_called_once_with(mock_config)
 
 
 class TestErrorHandling:

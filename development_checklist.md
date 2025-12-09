@@ -156,16 +156,16 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 #### 1. Config Model
 
-- [ ] In `config/model.py`, define dataclasses (or Pydantic models if you choose) for:
+- [x] In `config/model.py`, define dataclasses (or Pydantic models if you choose) for:
 
-  - [ ] `ContractConfig`:
+  - [x] `ContractConfig`:
     - `name: str`
     - `address: str`
     - `start_block: int`
     - `abi_path: str`
     - `index_events: bool = True`
 
-  - [ ] `SubgraphConfig`:
+  - [x] `SubgraphConfig`:
     - `config_version: int` (default `1`).
     - `name: str`
     - `network: str`
@@ -176,22 +176,22 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 #### 2. Config IO
 
-- [ ] In `config/io.py`:
+- [x] In `config/io.py`:
 
-  - [ ] `load_config(path: Path) -> SubgraphConfig`:
+  - [x] `load_config(path: Path) -> SubgraphConfig`:
     - Read JSON.
     - Validate required fields exist.
     - Construct and return `SubgraphConfig`.
 
-  - [ ] `save_config(config: SubgraphConfig, path: Path) -> None`:
+  - [x] `save_config(config: SubgraphConfig, path: Path) -> None`:
     - Serialize to JSON.
     - Include `config_version`.
 
 #### 3. Network Metadata & Validation
 
-- [ ] In `networks.py`:
+- [x] In `networks.py`:
 
-  - [ ] Define `SUPPORTED_NETWORKS` mapping, e.g.:
+  - [x] Define `SUPPORTED_NETWORKS` mapping, e.g.:
 
     ```python
     SUPPORTED_NETWORKS = {
@@ -215,9 +215,9 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
     Note: `chain_id` and `default_start_block` are optional metadata that may be useful for validation or documentation, but are not strictly required for basic functionality.
 
-- [ ] In `config/validation.py`:
+- [x] In `config/validation.py`:
 
-  - [ ] `validate_config(config: SubgraphConfig) -> None` that:
+  - [x] `validate_config(config: SubgraphConfig) -> None` that:
     - Checks `config.config_version == 1`.
     - Checks `config.network` in `SUPPORTED_NETWORKS`.
     - Validates each `address` as `0x` + 40 hex chars.
@@ -227,21 +227,21 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 #### 4. Integrate in CLI
 
-- [ ] In `cli.py`, update `run_from_args`:
+- [x] In `cli.py`, update `run_from_args`:
 
-  - [ ] If `--config` is provided:
+  - [x] If `--config` is provided:
     - Load config via `load_config`.
     - Call `validate_config`.
     - Log success or raise `ValidationError` on failure.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_config_io.py`:
+- [x] `tests/test_config_io.py`:
   - Round-trip: create a `SubgraphConfig` in code → save → load → compare fields.
-- [ ] `tests/test_validation.py`:
+- [x] `tests/test_validation.py`:
   - Valid config passes.
   - Various invalid configs produce `ValidationError` with expected messages.
-- [ ] Manual: create a simple `subgraph-config.json` by hand and verify `subgraph-wizard --config <file>` validates it.
+- [x] Manual: create a simple `subgraph-config.json` by hand and verify `subgraph-wizard --config <file>` validates it.
 
 **PR:** _Add config model, IO, network metadata, and basic validation_
 
