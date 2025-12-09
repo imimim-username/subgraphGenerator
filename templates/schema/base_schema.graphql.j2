@@ -1,0 +1,16 @@
+# Auto-generated GraphQL schema for {{ subgraph_name }}
+# Network: {{ network }}
+
+{% for entity in entities %}
+type {{ entity.name }} @entity {
+  id: ID!
+{% for field in entity.fields %}
+  {{ field.name }}: {{ field.type }}{{ "!" if field.required else "" }}
+{% endfor %}
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+{% endfor %}
+

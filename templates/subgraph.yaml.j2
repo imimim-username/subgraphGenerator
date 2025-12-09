@@ -1,0 +1,31 @@
+specVersion: 1.0.0
+schema:
+  file: ./schema.graphql
+dataSources:
+{% for contract in contracts %}
+  - kind: ethereum
+    name: {{ contract.name }}
+    network: {{ network }}
+    source:
+      address: "{{ contract.address }}"
+      abi: {{ contract.name }}
+      startBlock: {{ contract.start_block }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+{% for entity in contract.entities %}
+        - {{ entity }}
+{% endfor %}
+      abis:
+        - name: {{ contract.name }}
+          file: ./abis/{{ contract.abi_path }}
+      eventHandlers:
+{% for handler in contract.event_handlers %}
+        - event: {{ handler.event_signature }}
+          handler: {{ handler.handler_name }}
+{% endfor %}
+      file: ./src/mappings/{{ contract.name }}.ts
+{% endfor %}
+
