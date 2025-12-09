@@ -1,0 +1,17 @@
+{
+  "config_version": 1,
+  "name": "my-token-subgraph",
+  "network": "ethereum",
+  "output_dir": "./generated-subgraph",
+  "complexity": "basic",
+  "mappings_mode": "auto",
+  "contracts": [
+    {
+      "name": "TestToken",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "start_block": 12345678,
+      "abi_path": "TestToken.json",
+      "index_events": true
+    }
+  ]
+}

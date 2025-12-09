@@ -2,6 +2,10 @@
 
 import logging
 import argparse
+from pathlib import Path
+
+from subgraph_wizard.config.io import load_config
+from subgraph_wizard.config.validation import validate_config
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +76,31 @@ def run_from_args(args):
     else:
         logger.info("CLI mode: interactive wizard (no flags provided)")
     
-    # For now, log that generation is not yet implemented
+    # If --config is provided, load and validate the configuration
+    config = None
+    if args.config:
+        config_path = Path(args.config)
+        logger.info(f"Loading configuration from: {config_path}")
+        
+        config = load_config(config_path)
+        logger.info(f"Configuration loaded: {config.name}")
+        
+        validate_config(config)
+        logger.info(f"Configuration validated successfully: {config.name}")
+        logger.info(f"  Network: {config.network}")
+        logger.info(f"  Contracts: {len(config.contracts)}")
+        logger.info(f"  Mapping mode: {config.mappings_mode}")
+        logger.info(f"  Complexity: {config.complexity}")
+    
+    # Handle generation
     if args.generate:
+        if config is None:
+            logger.warning("--generate requires --config. Please provide a configuration file.")
+            return
         logger.info("Generation functionality will be implemented in a future milestone.")
     else:
-        logger.info("Interactive wizard will be implemented in a future milestone.")
+        if not args.config:
+            logger.info("Interactive wizard will be implemented in a future milestone.")
 
 
 if __name__ == "__main__":
