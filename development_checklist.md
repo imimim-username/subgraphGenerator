@@ -99,37 +99,37 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 #### 1. Custom Error Types
 
-- [ ] Create a new module `src/subgraph_wizard/errors.py` with:
+- [x] Create a new module `src/subgraph_wizard/errors.py` with:
 
-  - [ ] `class SubgraphWizardError(Exception): ...`
-  - [ ] `class ValidationError(SubgraphWizardError): ...`
-  - [ ] `class AbiFetchError(SubgraphWizardError): ...`
-  - [ ] (Optional) other specific subclasses as needed later.
+  - [x] `class SubgraphWizardError(Exception): ...`
+  - [x] `class ValidationError(SubgraphWizardError): ...`
+  - [x] `class AbiFetchError(SubgraphWizardError): ...`
+  - [x] (Optional) other specific subclasses as needed later.
 
 #### 2. Logging Setup
 
-- [ ] Implement `logging_setup.py`:
-  - [ ] `setup_logging(level: str = "INFO") -> logging.Logger`.
-  - [ ] Read `LOG_LEVEL` from environment, fallback to `"INFO"`.
-  - [ ] Configure a simple console handler.
-  - [ ] Avoid logging any environment variable whose name contains `"KEY"` or `"TOKEN"` (defensive measure).
+- [x] Implement `logging_setup.py`:
+  - [x] `setup_logging(level: str = "INFO") -> logging.Logger`.
+  - [x] Read `LOG_LEVEL` from environment, fallback to `"INFO"`.
+  - [x] Configure a simple console handler.
+  - [x] Avoid logging any environment variable whose name contains `"KEY"` or `"TOKEN"` (defensive measure).
 
 #### 3. CLI & Main
 
-- [ ] Implement `cli.py` with:
+- [x] Implement `cli.py` with:
 
-  - [ ] `parse_args(argv)` that defines:
+  - [x] `parse_args(argv)` that defines:
     - `--config` (optional path to config JSON).
     - `--generate` (flag).
     - `--dry-run` (flag).
     - `--version` (flag).
-  - [ ] `run_from_args(args)` that for now:
+  - [x] `run_from_args(args)` that for now:
     - Logs which mode is requested.
     - If `--version`, prints version and returns.
 
-- [ ] Implement `main.py`:
+- [x] Implement `main.py`:
 
-  - [ ] `run()`:
+  - [x] `run()`:
     - Calls `setup_logging`.
     - Calls `parse_args(sys.argv[1:])`.
     - Wraps `run_from_args(args)` in a `try/except SubgraphWizardError`:
@@ -137,10 +137,10 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_cli.py`:
+- [x] `tests/test_cli.py`:
   - Parse combinations of flags and assert on resulting `Namespace`.
-- [ ] Manual: `subgraph-wizard --help`, `--version` run without errors.
-- [ ] Manual: Trigger a synthetic `SubgraphWizardError` in `run_from_args` and verify the CLI shows a clean error message.
+- [x] Manual: `subgraph-wizard --help`, `--version` run without errors.
+- [x] Manual: Trigger a synthetic `SubgraphWizardError` in `run_from_args` and verify the CLI shows a clean error message.
 
 **PR:** _Add logging, error hierarchy, and base CLI skeleton_
 
