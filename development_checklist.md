@@ -36,19 +36,19 @@ Developers can work through this in order, opening PRs per milestone (or groupin
 
 ### Tasks
 
-- [ ] Initialize a new Git repository.
-- [ ] Add a minimal `pyproject.toml` with:
-  - [ ] Project metadata (name, version `"0.1.0"`, description).
-  - [ ] `requires-python = ">=3.10"`.
-  - [ ] Empty `[project.dependencies]` (to be filled later).
-  - [ ] Placeholder console script:
+- [x] Initialize a new Git repository.
+- [x] Add a minimal `pyproject.toml` with:
+  - [x] Project metadata (name, version `"0.1.0"`, description).
+  - [x] `requires-python = ">=3.10"`.
+  - [x] Empty `[project.dependencies]` (to be filled later).
+  - [x] Placeholder console script:
 
     ```toml
     [project.scripts]
     subgraph-wizard = "subgraph_wizard.main:run"
     ```
 
-- [ ] Create directory layout:
+- [x] Create directory layout:
 
   ```text
   subgraph-wizard/
@@ -62,28 +62,28 @@ Developers can work through this in order, opening PRs per milestone (or groupin
   └── .env.example
   ```
 
-- [ ] Populate `src/subgraph_wizard/` with empty modules (each file just imports `logging` and defines a placeholder docstring):
+- [x] Populate `src/subgraph_wizard/` with empty modules (each file just imports `logging` and defines a placeholder docstring):
 
-  - [ ] `__init__.py`
-  - [ ] `main.py`
-  - [ ] `cli.py`
-  - [ ] `interactive_wizard.py`
-  - [ ] `networks.py`
-  - [ ] `logging_setup.py`
-  - [ ] `errors.py`
-  - [ ] `config/__init__.py`, `config/model.py`, `config/io.py`, `config/validation.py`
-  - [ ] `abi/__init__.py`, `abi/local.py`, `abi/paste.py`, `abi/etherscan.py`, `abi/utils.py`
-  - [ ] `generate/__init__.py`, `generate/orchestrator.py`, `generate/project_layout.py`, `generate/subgraph_yaml.py`, `generate/schema.py`, `generate/mappings_stub.py`, `generate/mappings_auto.py`, `generate/package_json.py`, `generate/readme.py`
-  - [ ] `utils/fs_utils.py`, `utils/templating.py`, `utils/prompts_utils.py`
+  - [x] `__init__.py`
+  - [x] `main.py`
+  - [x] `cli.py`
+  - [x] `interactive_wizard.py`
+  - [x] `networks.py`
+  - [x] `logging_setup.py`
+  - [x] `errors.py`
+  - [x] `config/__init__.py`, `config/model.py`, `config/io.py`, `config/validation.py`
+  - [x] `abi/__init__.py`, `abi/local.py`, `abi/paste.py`, `abi/etherscan.py`, `abi/utils.py`
+  - [x] `generate/__init__.py`, `generate/orchestrator.py`, `generate/project_layout.py`, `generate/subgraph_yaml.py`, `generate/schema.py`, `generate/mappings_stub.py`, `generate/mappings_auto.py`, `generate/package_json.py`, `generate/readme.py`
+  - [x] `utils/fs_utils.py`, `utils/templating.py`, `utils/prompts_utils.py`
 
-- [ ] Add basic `.gitignore` (venv, `__pycache__`, `.env`, `.DS_Store`, etc.).
-- [ ] Add empty placeholder files in `docs/` and `templates/` (to be fleshed out later).
-- [ ] Copy in the generated `README.md` and `docs/architecture.md` (or placeholders if not yet committed).
+- [x] Add basic `.gitignore` (venv, `__pycache__`, `.env`, `.DS_Store`, etc.).
+- [x] Add empty placeholder files in `docs/` and `templates/` (to be fleshed out later).
+- [x] Copy in the generated `README.md` and `docs/architecture.md` (or placeholders if not yet committed).
 
 ### Tests / Acceptance Criteria
 
-- [ ] Add `tests/test_smoke_imports.py` that imports key modules (e.g. `subgraph_wizard.main`) without error.
-- [ ] `python -m subgraph_wizard` runs without throwing (even if it only prints “Not implemented yet.”).
+- [x] Add `tests/test_smoke_imports.py` that imports key modules (e.g. `subgraph_wizard.main`) without error.
+- [x] `python -m subgraph_wizard` runs without throwing (even if it only prints "Not implemented yet.").
 
 **PR:** _Initialize repository structure and placeholders_
 
