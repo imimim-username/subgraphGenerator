@@ -566,11 +566,11 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 ### Tasks
 
-- [ ] Add `tests/fixtures/basic_config.json` and sample ABI(s).
-- [ ] In `tests/test_full_generation_basic.py`:
-  - [ ] Load fixture config.
-  - [ ] Run `generate_subgraph_project` into a temp directory.
-  - [ ] Assertions:
+- [x] Add `tests/fixtures/basic_config.json` and sample ABI(s).
+- [x] In `tests/test_full_generation_basic.py`:
+  - [x] Load fixture config.
+  - [x] Run `generate_subgraph_project` into a temp directory.
+  - [x] Assertions:
     - Check that key files exist (`subgraph.yaml`, `schema.graphql`, mappings, `package.json`, README).
     - For `subgraph.yaml`, parse YAML and assert:
       - Correct network.
