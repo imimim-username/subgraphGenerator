@@ -118,6 +118,125 @@ graph build
 
 ---
 
+## 🚀 Quickstart
+
+### Installation
+
+**Prerequisites:**
+- Python 3.10 or higher
+- pip (Python package manager)
+
+**Install from source:**
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd subgraph-wizard
+
+# Create a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install the package
+pip install -e .
+
+# Verify installation
+subgraph-wizard --version
+```
+
+### Example 1: Interactive Wizard
+
+The easiest way to create a subgraph is using the interactive wizard:
+
+```bash
+subgraph-wizard
+```
+
+The wizard will guide you through:
+1. Subgraph name (e.g., `my-token-subgraph`)
+2. Network selection (e.g., `ethereum`, `optimism`, `arbitrum`)
+3. Contract configuration (name, address, start block)
+4. ABI acquisition method:
+   - Local file path
+   - Paste JSON directly
+   - Fetch from Etherscan/explorer API
+5. Mapping mode (`stub` or `auto`)
+6. Complexity level (`basic`, `intermediate`, or `advanced`)
+
+After completing the wizard, it will save a `subgraph-config.json` file and optionally generate the subgraph immediately.
+
+**Example workflow:**
+```bash
+$ subgraph-wizard
+Subgraph Wizard starting...
+Enter subgraph name: my-token-subgraph
+Select network: ethereum
+Enter contract name: TestToken
+Enter contract address: 0x6B175474E89094C44Da98b954EedeAC495271d0F
+Enter start block: 12345678
+Select ABI source: [1] Local file [2] Paste JSON [3] Fetch from explorer
+...
+Configuration saved to: ./my-token-subgraph/subgraph-config.json
+Generate subgraph now? [Y/n]: y
+Generating subgraph...
+✓ Subgraph generated successfully!
+```
+
+### Example 2: Config-Driven Workflow
+
+For non-interactive usage or automation, create a `subgraph-config.json` file:
+
+```json
+{
+  "config_version": 1,
+  "name": "my-token-subgraph",
+  "network": "ethereum",
+  "output_dir": "./generated-subgraph",
+  "complexity": "basic",
+  "mappings_mode": "auto",
+  "contracts": [
+    {
+      "name": "TestToken",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "start_block": 12345678,
+      "abi_path": "TestToken.json",
+      "index_events": true
+    }
+  ]
+}
+```
+
+Then generate the subgraph:
+
+```bash
+# Generate from config
+subgraph-wizard --config subgraph-config.json --generate
+
+# Or preview without writing files
+subgraph-wizard --config subgraph-config.json --generate --dry-run
+```
+
+**Note:** Make sure the ABI file (`TestToken.json` in this example) exists in the `abis/` directory relative to your config file, or use the interactive wizard first to set up the ABI files.
+
+### Next Steps
+
+After generation, build and deploy your subgraph:
+
+```bash
+cd <output_dir>
+npm install
+graph codegen
+graph build
+graph deploy --node <node-url> <subgraph-name>
+```
+
+For more detailed documentation, see:
+- [User Guide](docs/user-guide.md) – Complete usage instructions
+- [Config Format](docs/config-format.md) – Configuration file reference
+- [Architecture](docs/architecture.md) – System design overview
+
+---
+
 ## 🔑 Environment Variables (`.env.example`)
 
 Users copy `.env.example` → `.env`.  
