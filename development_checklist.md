@@ -693,7 +693,7 @@ This milestone is intentionally more flexible and should be guided by your real 
 - [x] Update `README.md`:
   - [x] Add “Quickstart” section (install, basic example).
   - [x] Show both interactive wizard and config-driven workflows.
-- [ ] Update `docs/architecture.md` if anything changed vs original plan.
+- [x] Update `docs/architecture.md` if anything changed vs original plan.
 - [ ] Flesh out:
   - [ ] `docs/user-guide.md` – detailed usage.
   - [ ] `docs/config-format.md` – config schema for all complexity levels.

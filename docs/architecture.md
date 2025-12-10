@@ -47,6 +47,7 @@ subgraph-wizard/
 ├── src/
 │   └── subgraph_wizard/
 │       ├── __init__.py
+│       ├── __main__.py
 │       ├── main.py
 │       ├── cli.py
 │       ├── interactive_wizard.py
@@ -82,9 +83,7 @@ subgraph-wizard/
 │   ├── README.generated.md.j2
 │   ├── package.json.j2
 │   ├── schema/
-│   │   ├── base_schema.graphql.j2
-│   │   ├── auto_entity.graphql.j2
-│   │   └── stub_entity.graphql.j2
+│   │   └── base_schema.graphql.j2
 │   └── mappings/
 │       ├── common_header.ts.j2
 │       ├── mapping_stub.ts.j2
@@ -136,8 +135,13 @@ The result: a fully formed subgraph project in a target output directory.
 
 ### 4.1 Entry & Interaction Layer
 
+#### `__main__.py`
+- Entry point for running the package as a module (`python -m subgraph_wizard`).
+- Delegates to `main.py`.
+
 #### `main.py`
-- Provides the top-level entry point.
+- Provides the top-level entry point for the `subgraph-wizard` CLI command.
+- Sets up logging and error handling.
 - Dispatches between:
   - Interactive wizard mode (no `--config` flag).
   - Non-interactive mode (with `--config` and `--generate` flags).
@@ -166,13 +170,15 @@ The result: a fully formed subgraph project in a target output directory.
 ### 4.2 Configuration Layer (`config/`)
 
 #### `config/model.py`
-- Defines the core configuration data structures, e.g.:
+- Defines the core configuration data structures:
 
-  - `SubgraphConfig`
-  - `ContractConfig`
-  - `AbiConfig`
-  - `configVersion` for forward compatibility
+  - `SubgraphConfig` – top-level configuration for the entire subgraph
+  - `ContractConfig` – configuration for a single contract to index
+  - `TemplateConfig` – configuration for dynamic data source templates (advanced complexity)
+  - `EntityRelationship` – configuration for relationships between entities (advanced complexity)
+  - `configVersion` – integer field for forward compatibility (1=basic, 2=intermediate, 3=advanced)
 
+- ABIs are referenced via `abi_path` fields in `ContractConfig` and `TemplateConfig`, not as a separate `AbiConfig` class.
 - Provides typed, structured representations of the config used by all other modules.
 
 #### `config/io.py`
@@ -241,15 +247,16 @@ The generation layer takes the validated config + ABIs and creates all the files
 #### `generate/orchestrator.py`
 - Orchestrates the full generation pipeline:
   1. Ensures the target output directory and subdirectories exist (`project_layout.py`).
-  2. Ensures ABIs are present in the `abis/` folder.
+  2. Loads ABIs for all contracts and templates from the `abis/` folder.
   3. Calls:
      - `subgraph_yaml.py` for `subgraph.yaml`
      - `schema.py` for `schema.graphql`
-     - `mappings_stub.py` or `mappings_auto.py` for mapping files
+     - `mappings_stub.py` or `mappings_auto.py` for mapping files (based on mappings_mode)
      - `package_json.py` for `package.json`
      - `readme.py` for the subgraph’s own README
-- Implements safeguards for overwriting:
-  - Optionally requires explicit confirmation or a `--force` flag to overwrite non-empty directories.
+- Supports `--dry-run` mode:
+  - Logs what would be written without actually writing files.
+  - Shows file paths, sizes, and previews of content.
 
 #### `generate/project_layout.py`
 - Defines the on-disk structure of generated subgraphs:
@@ -265,13 +272,18 @@ The generation layer takes the validated config + ABIs and creates all the files
   - Network selection.
   - Mapping file paths.
   - Start blocks.
-
-#### `generate/schema.py`
-- Generates the `schema.graphql` file.
-- Behavior depends on mapping mode:
-  - **Stub mode** – creates minimal or placeholder entities with TODOs.
-  - **Auto mode** – generates entities that map directly to event parameters (plus common fields like `blockNumber`, `timestamp`, `txHash`).
-- Uses templates in `templates/schema/`.
+  - Event handlers (derived from ABIs).
+  - Call handlers (intermediate complexity).
+  - Block handlers (intermediate complexity).
+  - Templates and dynamic data sources (advanced complexity).
+- Entities are built programmatically from ABIs:
+  - Each event in a contract's ABI becomes an entity type.
+  - Entity fields are derived from event parameters.
+  - Standard metadata fields (`blockNumber`, `blockTimestamp`, `transactionHash`) are added to all entities.
+- For advanced complexity:
+  - Generates entities for template events.
+  - Adds relationship fields between entities based on `EntityRelationship` configs.
+- Uses the single template `templates/schema/base_schema.graphql.j2` which iterates over all entities.
 
 #### `generate/mappings_stub.py`
 - Produces mapping files with:
@@ -335,9 +347,7 @@ The `templates/` directory holds *all text templates* used by the generators.
   Template for mappings project dependencies and scripts.
 
 - `schema/`  
-  - `base_schema.graphql.j2` – Shared base types (if any).  
-  - `auto_entity.graphql.j2` – Per-entity template for auto mode.  
-  - `stub_entity.graphql.j2` – Minimal entities for stub mode.
+  - `base_schema.graphql.j2` – Main schema template that iterates over all entities and renders them with standard metadata fields.
 
 - `mappings/`  
   - `common_header.ts.j2` – Shared imports and helper code.  
