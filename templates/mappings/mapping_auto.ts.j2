@@ -3,7 +3,7 @@
 {% for handler in handlers %}
 export function {{ handler.name }}(event: {{ handler.event_type }}): void {
   let entity = new {{ handler.entity_name }}(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
+    event.transaction.hash.concatI32(event.logIndex.toI32()).toHexString()
   );
 
 {% for param in handler.params %}
@@ -28,7 +28,7 @@ export function {{ handler.name }}(event: {{ handler.event_type }}): void {
 {% for handler in call_handlers %}
 export function {{ handler.name }}(call: {{ handler.call_type }}): void {
   let entity = new {{ handler.entity_name }}(
-    call.transaction.hash.concatI32(call.transaction.index.toI32())
+    call.transaction.hash.concatI32(call.transaction.index.toI32()).toHexString()
   );
 
 {% for param in handler.inputs %}
