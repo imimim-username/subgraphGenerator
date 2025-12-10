@@ -503,19 +503,19 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 1. Stub Mappings
 
-- [ ] In `templates/mappings/mapping_stub.ts.j2`:
-  - [ ] Create a template that:
+- [x] In `templates/mappings/mapping_stub.ts.j2`:
+  - [x] Create a template that:
     - Imports event types.
     - Declares handler functions with TODO comments.
 
-- [ ] In `generate/mappings_stub.py`:
-  - [ ] Given ABI info, generate stubs for each event.
-  - [ ] Ensure naming conventions match `schema.graphql` types (even if stubbed).
+- [x] In `generate/mappings_stub.py`:
+  - [x] Given ABI info, generate stubs for each event.
+  - [x] Ensure naming conventions match `schema.graphql` types (even if stubbed).
 
 #### 2. Package.json
 
-- [ ] In `templates/package.json.j2`:
-  - [ ] Fill in typical subgraph/mappings dependencies and scripts (`codegen`, `build`):
+- [x] In `templates/package.json.j2`:
+  - [x] Fill in typical subgraph/mappings dependencies and scripts (`codegen`, `build`):
     - Required dependencies:
       - `@graphprotocol/graph-cli`: latest stable version
       - `@graphprotocol/graph-ts`: latest stable version
@@ -524,34 +524,34 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
       - `build`: `graph build`
       - `deploy`: `graph deploy --node <node-url> <subgraph-name>` (placeholder, user should customize)
 
-- [ ] In `generate/package_json.py`:
-  - [ ] Render `package.json` using config data where appropriate (e.g., name).
+- [x] In `generate/package_json.py`:
+  - [x] Render `package.json` using config data where appropriate (e.g., name).
 
 #### 3. Generated Subgraph README
 
-- [ ] In `templates/README.generated.md.j2`:
-  - [ ] A template explaining:
+- [x] In `templates/README.generated.md.j2`:
+  - [x] A template explaining:
     - Network.
     - Contracts.
     - How to install dependencies.
     - Commands to run `graph codegen` and `graph build`.
 
-- [ ] In `generate/readme.py`:
-  - [ ] Render this template for each generated subgraph.
+- [x] In `generate/readme.py`:
+  - [x] Render this template for each generated subgraph.
 
 #### 4. Orchestrator Integration
 
-- [ ] Update `generate/orchestrator.py`:
-  - [ ] If `mappings_mode == "stub"`, use stub generator.
-  - [ ] Generate `package.json` and README in all cases.
+- [x] Update `generate/orchestrator.py`:
+  - [x] If `mappings_mode == "stub"`, use stub generator.
+  - [x] Generate `package.json` and README in all cases.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_generate_mappings_stub.py`:
+- [x] `tests/test_generate_mappings_stub.py`:
   - Check that stub handlers exist for expected events and contain TODO comments.
-- [ ] `tests/test_generate_package_json.py`:
+- [x] `tests/test_generate_package_json.py`:
   - Load `package.json` and assert required fields and dependencies.
-- [ ] `tests/test_generate_readme.py`:
+- [x] `tests/test_generate_readme.py`:
   - Assert network and contract names appear in generated README.
 
 **PR:** _Add stub mappings, package.json, and generated subgraph README for basic complexity_

@@ -1,0 +1,28 @@
+{{ header }}
+
+{% for handler in handlers %}
+export function {{ handler.name }}(event: {{ handler.event_type }}): void {
+  // TODO: Implement handler for {{ handler.event_name }} event
+  // 
+  // This handler is called when the {{ handler.event_name }} event is emitted.
+  // You should create or update entities based on the event data.
+  //
+  // Example implementation:
+  //
+  // let entity = new {{ handler.entity_name }}(
+  //   event.transaction.hash.concatI32(event.logIndex.toI32())
+  // );
+  //
+{% for param in handler.params %}
+  // entity.{{ param.entity_field }} = event.params.{{ param.event_param }};
+{% endfor %}
+  //
+  // // Common metadata fields
+  // entity.blockNumber = event.block.number;
+  // entity.blockTimestamp = event.block.timestamp;
+  // entity.transactionHash = event.transaction.hash;
+  //
+  // entity.save();
+}
+
+{% endfor %}

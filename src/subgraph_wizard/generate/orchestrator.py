@@ -13,6 +13,9 @@ from subgraph_wizard.generate.project_layout import prepare_project_structure
 from subgraph_wizard.generate.subgraph_yaml import render_subgraph_yaml
 from subgraph_wizard.generate.schema import render_schema
 from subgraph_wizard.generate.mappings_auto import render_all_mappings_auto
+from subgraph_wizard.generate.mappings_stub import render_all_mappings_stub
+from subgraph_wizard.generate.package_json import render_package_json
+from subgraph_wizard.generate.readme import render_readme
 from subgraph_wizard.abi.local import load_abi_from_file
 from subgraph_wizard.utils.fs_utils import safe_write
 
@@ -83,6 +86,8 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
     3. Renders subgraph.yaml manifest
     4. Renders schema.graphql
     5. Renders mapping files (based on mappings_mode)
+    6. Renders package.json
+    7. Renders README.md
     
     Args:
         config: Validated subgraph configuration.
@@ -141,19 +146,38 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
     # Step 5: Render and write mapping files
     if config.mappings_mode == "auto":
         mappings = render_all_mappings_auto(config, abi_map)
-        
-        for contract_name, mapping_content in mappings.items():
-            mapping_path = root_dir / "src" / "mappings" / f"{contract_name}.ts"
-            
-            if dry_run:
-                _log_dry_run_file(mapping_path, mapping_content)
-            else:
-                safe_write(mapping_path, mapping_content)
-                logger.info(f"Generated: {mapping_path}")
     else:
-        # Stub mappings will be implemented in Milestone 7
-        logger.warning(f"Mappings mode '{config.mappings_mode}' is not yet implemented. "
-                      "Skipping mapping generation.")
+        # Use stub mappings for "stub" mode (or any non-auto mode)
+        mappings = render_all_mappings_stub(config, abi_map)
+    
+    for contract_name, mapping_content in mappings.items():
+        mapping_path = root_dir / "src" / "mappings" / f"{contract_name}.ts"
+        
+        if dry_run:
+            _log_dry_run_file(mapping_path, mapping_content)
+        else:
+            safe_write(mapping_path, mapping_content)
+            logger.info(f"Generated: {mapping_path}")
+    
+    # Step 6: Render and write package.json
+    package_json_content = render_package_json(config)
+    package_json_path = root_dir / "package.json"
+    
+    if dry_run:
+        _log_dry_run_file(package_json_path, package_json_content)
+    else:
+        safe_write(package_json_path, package_json_content)
+        logger.info(f"Generated: {package_json_path}")
+    
+    # Step 7: Render and write README.md
+    readme_content = render_readme(config, abi_map)
+    readme_path = root_dir / "README.md"
+    
+    if dry_run:
+        _log_dry_run_file(readme_path, readme_content)
+    else:
+        safe_write(readme_path, readme_content)
+        logger.info(f"Generated: {readme_path}")
     
     # Summary
     if dry_run:
@@ -163,5 +187,5 @@ def generate_subgraph_project(config: SubgraphConfig, dry_run: bool = False) -> 
         logger.info("Next steps:")
         logger.info(f"  1. cd {root_dir}")
         logger.info("  2. npm install  (or yarn)")
-        logger.info("  3. graph codegen")
-        logger.info("  4. graph build")
+        logger.info("  3. npm run codegen")
+        logger.info("  4. npm run build")

@@ -164,18 +164,15 @@ class TestGenerateSubgraphProject:
 
 
 class TestStubMappingsMode:
-    """Tests for stub mappings mode (not yet fully implemented)."""
+    """Tests for stub mappings mode."""
     
-    def test_stub_mode_logs_warning(self, tmp_path, caplog):
-        """Test that stub mode logs a warning about not being implemented."""
-        import logging
-        caplog.set_level(logging.WARNING)
-        
+    def test_stub_mode_generates_stub_mappings(self, tmp_path):
+        """Test that stub mode generates stub mapping files with TODO comments."""
         config = SubgraphConfig(
             name="stub-subgraph",
             network="ethereum",
             output_dir=str(tmp_path / "stub-output"),
-            mappings_mode="stub",  # Not yet implemented
+            mappings_mode="stub",
             contracts=[
                 ContractConfig(
                     name="TestContract",
@@ -188,10 +185,17 @@ class TestStubMappingsMode:
         
         generate_subgraph_project(config)
         
-        # Should still create subgraph.yaml and schema
+        # Should create all expected files
         assert (Path(config.output_dir) / "subgraph.yaml").exists()
         assert (Path(config.output_dir) / "schema.graphql").exists()
+        assert (Path(config.output_dir) / "package.json").exists()
+        assert (Path(config.output_dir) / "README.md").exists()
         
-        # Should warn about stub not being implemented
-        assert "not yet implemented" in caplog.text.lower()
+        # Should create stub mapping file
+        mapping_path = Path(config.output_dir) / "src" / "mappings" / "TestContract.ts"
+        assert mapping_path.exists()
+        
+        # Stub mapping should contain TODO comments
+        mapping_content = mapping_path.read_text()
+        assert "TODO:" in mapping_content
 
