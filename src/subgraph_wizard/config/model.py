@@ -17,16 +17,28 @@ class ContractConfig:
         start_block: Block number to start indexing from.
         abi_path: Filename of the ABI JSON file (relative to abis/ directory).
         index_events: Whether to index events from this contract.
+        call_handlers: List of function signatures to index (intermediate complexity).
+            Example: ["transfer(address,uint256)", "approve(address,uint256)"]
+        block_handler: Whether to enable block handler for this contract (intermediate complexity).
     """
     name: str
     address: str
     start_block: int
     abi_path: str
     index_events: bool = True
+    call_handlers: Optional[list[str]] = None
+    block_handler: bool = False
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        result = asdict(self)
+        # Only include intermediate fields if they have non-default values
+        # to keep basic configs clean
+        if result.get("call_handlers") is None:
+            del result["call_handlers"]
+        if not result.get("block_handler"):
+            del result["block_handler"]
+        return result
     
     @classmethod
     def from_dict(cls, data: dict) -> "ContractConfig":
@@ -47,6 +59,8 @@ class ContractConfig:
             start_block=data["start_block"],
             abi_path=data["abi_path"],
             index_events=data.get("index_events", True),
+            call_handlers=data.get("call_handlers"),
+            block_handler=data.get("block_handler", False),
         )
 
 
@@ -61,6 +75,8 @@ class SubgraphConfig:
         mappings_mode: Mapping generation mode ('stub' or 'auto').
         contracts: List of contracts to index.
         config_version: Configuration schema version for forward compatibility.
+            - Version 1: Basic complexity only (events)
+            - Version 2: Adds intermediate complexity (call/block handlers)
         complexity: Complexity level ('basic', 'intermediate', 'advanced').
     """
     name: str
@@ -73,8 +89,13 @@ class SubgraphConfig:
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
+        # Determine config version based on complexity
+        version = self.config_version
+        if self.complexity == "intermediate" and version < 2:
+            version = 2
+        
         return {
-            "config_version": self.config_version,
+            "config_version": version,
             "name": self.name,
             "network": self.network,
             "output_dir": self.output_dir,
@@ -86,6 +107,10 @@ class SubgraphConfig:
     @classmethod
     def from_dict(cls, data: dict) -> "SubgraphConfig":
         """Create a SubgraphConfig from a dictionary.
+        
+        Supports both version 1 (basic) and version 2 (intermediate) configs.
+        Version 1 configs are automatically compatible - intermediate fields
+        will be initialized with defaults.
         
         Args:
             data: Dictionary containing subgraph configuration.

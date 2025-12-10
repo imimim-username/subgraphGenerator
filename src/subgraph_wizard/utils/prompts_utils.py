@@ -215,3 +215,56 @@ def ask_int(
             continue
         
         return value
+
+
+def ask_string_list(
+    prompt: str,
+    item_name: str = "item",
+    validator: Callable[[str], bool] | None = None,
+    error_message: str = "Invalid input. Please try again."
+) -> list[str]:
+    """Ask the user for a list of strings, one at a time.
+    
+    Keeps asking for more items until the user enters an empty line.
+    
+    Args:
+        prompt: The prompt to display before collecting items.
+        item_name: Name of the item type for prompts (e.g., "function signature").
+        validator: Optional function to validate each item (returns True if valid).
+        error_message: Message to display when validation fails.
+    
+    Returns:
+        List of collected strings (may be empty if user enters nothing).
+    
+    Raises:
+        KeyboardInterrupt: If user presses Ctrl+C.
+        EOFError: If input stream is closed.
+    """
+    print(f"\n{prompt}")
+    print(f"Enter each {item_name} on a separate line.")
+    print("Press Enter with empty line when done.\n")
+    
+    items: list[str] = []
+    
+    while True:
+        item_num = len(items) + 1
+        try:
+            response = input(f"{item_name} {item_num} (or empty to finish): ").strip()
+        except EOFError:
+            print()
+            break
+        
+        # Empty line means done
+        if not response:
+            break
+        
+        # Run validation if provided
+        if validator is not None:
+            if not validator(response):
+                print(error_message)
+                continue
+        
+        items.append(response)
+        print(f"  ✓ Added: {response}")
+    
+    return items

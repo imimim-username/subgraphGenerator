@@ -596,26 +596,26 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 1. Config Extensions
 
-- [ ] In `config/model.py`:
-  - [ ] Extend `ContractConfig` with optional fields for intermediate complexity:
+- [x] In `config/model.py`:
+  - [x] Extend `ContractConfig` with optional fields for intermediate complexity:
     - `call_handlers: list[str] | None = None` – list of function signatures or names to index (e.g., `["transfer(address,uint256)"]`).
     - `block_handler: bool = False` – whether to index every block for this contract.
-  - [ ] Extend `SubgraphConfig` with optional intermediate complexity fields:
+  - [x] Extend `SubgraphConfig` with optional intermediate complexity fields:
     - Fields can be added at the top level or within `ContractConfig` (recommended: within `ContractConfig`).
-  - [ ] Bump `config_version` to `2` for new configs created with intermediate features.
-  - [ ] Config versioning strategy:
+  - [x] Bump `config_version` to `2` for new configs created with intermediate features.
+  - [x] Config versioning strategy:
     - Implement backward compatibility: accept both version 1 and version 2 configs in `config/validation.py`.
     - When loading version 1 configs, initialize intermediate fields with defaults (empty lists, `False`).
     - No automatic migration needed initially; version 1 configs remain valid and functional.
 
-- [ ] In `config/validation.py`:
-  - [ ] Validate intermediate-only fields only when `complexity == "intermediate"`.
+- [x] In `config/validation.py`:
+  - [x] Validate intermediate-only fields only when `complexity == "intermediate"`.
 
 #### 2. Wizard Updates
 
-- [ ] In `interactive_wizard.py`:
-  - [ ] Allow user to choose `complexity = "basic" | "intermediate"`.
-  - [ ] If `intermediate`:
+- [x] In `interactive_wizard.py`:
+  - [x] Allow user to choose `complexity = "basic" | "intermediate"`.
+  - [x] If `intermediate`:
     - For each contract:
       - Ask whether to enable call handlers: `ask_yes_no("Enable call handlers for this contract?")`.
         - If yes, prompt for function signatures (comma-separated or one per line until empty line).
@@ -626,20 +626,20 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 #### 3. Generators
 
-- [ ] In `generate/subgraph_yaml.py`:
-  - [ ] Use intermediate fields to:
+- [x] In `generate/subgraph_yaml.py`:
+  - [x] Use intermediate fields to:
     - Add `callHandlers` and/or `blockHandlers` entries under relevant dataSources.
 
-- [ ] In mapping generators:
-  - [ ] Generate stub or auto handlers (depending on `mappings_mode`) for these call/block handlers.
-  - [ ] For intermediate, it’s fine if logic is largely stubbed with TODOs initially.
+- [x] In mapping generators:
+  - [x] Generate stub or auto handlers (depending on `mappings_mode`) for these call/block handlers.
+  - [x] For intermediate, it's fine if logic is largely stubbed with TODOs initially.
 
 ### Tests / Acceptance Criteria
 
-- [ ] Extend `tests/test_validation.py` for intermediate fields.
-- [ ] `tests/test_generate_subgraph_yaml_intermediate.py`:
+- [x] Extend `tests/test_validation.py` for intermediate fields.
+- [x] `tests/test_generate_subgraph_yaml_intermediate.py`:
   - Assert that `callHandlers` or `blockHandlers` appear in `subgraph.yaml` when expected.
-- [ ] Ensure all basic tests (Milestones 0–8) still pass.
+- [x] Ensure all basic tests (Milestones 0–8) still pass.
 
 **PR:** _Add intermediate complexity support for call/block handlers_
 

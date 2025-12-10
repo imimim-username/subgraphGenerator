@@ -389,3 +389,105 @@ class TestNetworkSupport:
         for network, info in SUPPORTED_NETWORKS.items():
             assert "chain_id" in info, f"{network} missing chain_id"
 
+
+class TestIntermediateComplexity:
+    """Tests for intermediate complexity validation."""
+    
+    def test_valid_intermediate_config(self):
+        """Test that intermediate complexity config passes validation."""
+        contract = ContractConfig(
+            name="TestToken",
+            address="0x1234567890123456789012345678901234567890",
+            start_block=12345678,
+            abi_path="TestToken.json",
+            call_handlers=["transfer(address,uint256)"],
+            block_handler=True,
+        )
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=[contract],
+            config_version=2,
+            complexity="intermediate",
+        )
+        validate_config(config)  # Should not raise
+    
+    def test_valid_intermediate_no_handlers(self):
+        """Test that intermediate config without handlers is valid."""
+        contract = ContractConfig(
+            name="TestToken",
+            address="0x1234567890123456789012345678901234567890",
+            start_block=12345678,
+            abi_path="TestToken.json",
+            call_handlers=None,
+            block_handler=False,
+        )
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=[contract],
+            config_version=2,
+            complexity="intermediate",
+        )
+        validate_config(config)  # Should not raise
+    
+    def test_invalid_call_handler_signature_missing_parens(self):
+        """Test that invalid call handler signature fails validation."""
+        from subgraph_wizard.config.validation import validate_call_handler_signature
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_call_handler_signature("transfer", "TestContract")
+        
+        assert "Invalid call handler signature" in str(exc_info.value)
+    
+    def test_invalid_call_handler_signature_empty(self):
+        """Test that empty call handler signature fails validation."""
+        from subgraph_wizard.config.validation import validate_call_handler_signature
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_call_handler_signature("", "TestContract")
+        
+        assert "Empty call handler signature" in str(exc_info.value)
+    
+    def test_invalid_call_handler_signature_no_function_name(self):
+        """Test that call handler without function name fails validation."""
+        from subgraph_wizard.config.validation import validate_call_handler_signature
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_call_handler_signature("(address,uint256)", "TestContract")
+        
+        assert "missing function name" in str(exc_info.value)
+    
+    def test_valid_call_handler_signatures(self):
+        """Test that valid call handler signatures pass validation."""
+        from subgraph_wizard.config.validation import validate_call_handler_signature
+        
+        # These should not raise
+        validate_call_handler_signature("transfer(address,uint256)", "TestContract")
+        validate_call_handler_signature("approve(address,uint256)", "TestContract")
+        validate_call_handler_signature("setOwner(address)", "TestContract")
+        validate_call_handler_signature("noParams()", "TestContract")
+    
+    def test_config_version_2_supported(self):
+        """Test that config version 2 is supported."""
+        config = make_valid_config(config_version=2, complexity="intermediate")
+        validate_config(config)  # Should not raise
+    
+    def test_intermediate_complexity_supported(self):
+        """Test that intermediate complexity is now supported."""
+        config = make_valid_config(complexity="intermediate", config_version=2)
+        validate_config(config)  # Should not raise
+    
+    def test_advanced_complexity_not_supported(self):
+        """Test that advanced complexity is not yet supported."""
+        config = make_valid_config(complexity="advanced")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_config(config)
+        
+        assert "complexity" in str(exc_info.value).lower()
+
