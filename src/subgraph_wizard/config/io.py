@@ -60,6 +60,33 @@ def load_config(path: Path) -> SubgraphConfig:
                 f"Contract at index {i} is missing required fields: {', '.join(contract_missing)}"
             )
     
+    # Validate templates field if present (advanced complexity)
+    if "templates" in data and not isinstance(data["templates"], list):
+        raise ValidationError("'templates' field must be a list")
+    
+    # Validate each template has required fields
+    for i, template in enumerate(data.get("templates", [])):
+        template_required = ["name", "abi_path", "source_contract", "source_event"]
+        template_missing = [f for f in template_required if f not in template]
+        if template_missing:
+            raise ValidationError(
+                f"Template at index {i} is missing required fields: {', '.join(template_missing)}"
+            )
+    
+    # Validate entity_relationships field if present (advanced complexity)
+    if "entity_relationships" in data and not isinstance(data["entity_relationships"], list):
+        raise ValidationError("'entity_relationships' field must be a list")
+    
+    # Validate each entity relationship has required fields
+    for i, relationship in enumerate(data.get("entity_relationships", [])):
+        relationship_required = ["from_entity", "to_entity", "relation_type", "field_name"]
+        relationship_missing = [f for f in relationship_required if f not in relationship]
+        if relationship_missing:
+            raise ValidationError(
+                f"Entity relationship at index {i} is missing required fields: "
+                f"{', '.join(relationship_missing)}"
+            )
+    
     try:
         config = SubgraphConfig.from_dict(data)
         logger.debug(f"Loaded configuration from {path}")

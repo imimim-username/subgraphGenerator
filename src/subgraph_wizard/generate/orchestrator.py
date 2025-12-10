@@ -45,20 +45,23 @@ def _log_dry_run_file(path: Path, content: str) -> None:
 
 
 def _load_abi_map(config: SubgraphConfig, abis_dir: Path) -> dict[str, list[dict[str, Any]]]:
-    """Load ABIs for all contracts in the configuration.
+    """Load ABIs for all contracts and templates in the configuration.
     
     Attempts to load ABI files from the abis directory. If an ABI file
     doesn't exist, logs a warning and continues without it.
+    
+    For advanced complexity, also loads ABIs for templates.
     
     Args:
         config: Subgraph configuration.
         abis_dir: Path to the abis directory.
     
     Returns:
-        Dictionary mapping contract names to their ABI data.
+        Dictionary mapping contract/template names to their ABI data.
     """
     abi_map = {}
     
+    # Load contract ABIs
     for contract in config.contracts:
         abi_path = abis_dir / contract.abi_path
         
@@ -71,6 +74,21 @@ def _load_abi_map(config: SubgraphConfig, abis_dir: Path) -> dict[str, list[dict
                 logger.warning(f"Failed to load ABI for {contract.name}: {e}")
         else:
             logger.debug(f"ABI file not found for {contract.name}: {abi_path}")
+    
+    # Load template ABIs (advanced complexity)
+    if config.complexity == "advanced" and config.templates:
+        for template in config.templates:
+            abi_path = abis_dir / template.abi_path
+            
+            if abi_path.exists():
+                try:
+                    abi = load_abi_from_file(abi_path)
+                    abi_map[template.name] = abi
+                    logger.info(f"Loaded ABI for template {template.name} from {abi_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load ABI for template {template.name}: {e}")
+            else:
+                logger.debug(f"ABI file not found for template {template.name}: {abi_path}")
     
     return abi_map
 

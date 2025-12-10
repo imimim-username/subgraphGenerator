@@ -655,28 +655,28 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 This milestone is intentionally more flexible and should be guided by your real advanced use cases.
 
-- [ ] Extend `SubgraphConfig` to model advanced concepts:
+- [x] Extend `SubgraphConfig` to model advanced concepts:
   - Dynamic data sources and templates.
   - Potential relationships between entities and multiple contracts.
-- [ ] Extend wizard to:
+- [x] Extend wizard to:
   - Offer `complexity = "advanced"`.
   - Collect required advanced options in a manageable way.
 
-- [ ] Extend generators:
+- [x] Extend generators:
   - `generate/subgraph_yaml.py`:
     - Add `templates` and `dynamicDataSources` sections.
   - Mapping generators:
     - Add mapping code needed to instantiate and manage dynamic data sources.
 
-- [ ] Update docs:
-  - `docs/config-format.md` – advanced fields.
-  - `docs/user-guide.md` – examples of advanced configs.
+- [x] Update docs:
+  - [x] `docs/config-format.md` – advanced fields.
+  - [x] `docs/user-guide.md` – examples of advanced configs.
 
 ### Tests / Acceptance Criteria
 
-- [ ] Add advanced fixtures in `tests/fixtures/`.
-- [ ] Add `tests/test_generate_subgraph_yaml_advanced.py` and similar mapping tests.
-- [ ] Add an advanced end-to-end test (semantic checks only, as with basic and intermediate).
+- [x] Add advanced fixtures in `tests/fixtures/`.
+- [x] Add `tests/test_generate_subgraph_yaml_advanced.py` and similar mapping tests.
+- [x] Add an advanced end-to-end test (semantic checks only, as with basic and intermediate).
 
 **PR:** _Add advanced complexity, templates, and dynamic data source support_
 

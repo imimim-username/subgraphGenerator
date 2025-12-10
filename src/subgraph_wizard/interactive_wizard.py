@@ -12,7 +12,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from subgraph_wizard.config.model import SubgraphConfig, ContractConfig
+from subgraph_wizard.config.model import (
+    SubgraphConfig,
+    ContractConfig,
+    TemplateConfig,
+    EntityRelationship,
+)
 from subgraph_wizard.config.io import save_config
 from subgraph_wizard.config.validation import validate_config
 from subgraph_wizard.networks import SUPPORTED_NETWORKS
@@ -196,6 +201,249 @@ def _validate_call_handler_signature(signature: str) -> bool:
     return bool(func_name)
 
 
+def _validate_template_name(name: str) -> bool:
+    """Validate a template name.
+    
+    Template names should be alphanumeric (with underscores) and not empty.
+    Similar to contract names.
+    
+    Args:
+        name: Template name to validate.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    import re
+    # Allow alphanumeric and underscores, must start with letter
+    pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+    return bool(pattern.match(name))
+
+
+def _validate_event_name(name: str) -> bool:
+    """Validate an event name.
+    
+    Event names should be alphanumeric (with underscores) and not empty.
+    
+    Args:
+        name: Event name to validate.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    import re
+    # Allow alphanumeric and underscores, must start with letter
+    pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+    return bool(pattern.match(name))
+
+
+def _validate_entity_name(name: str) -> bool:
+    """Validate an entity name.
+    
+    Entity names should be alphanumeric (with underscores) and not empty.
+    Typically PascalCase but not enforced.
+    
+    Args:
+        name: Entity name to validate.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    import re
+    # Allow alphanumeric and underscores, must start with letter
+    pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+    return bool(pattern.match(name))
+
+
+def _validate_field_name(name: str) -> bool:
+    """Validate a field name.
+    
+    Field names should be alphanumeric (with underscores) and not empty.
+    Typically camelCase but not enforced.
+    
+    Args:
+        name: Field name to validate.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    import re
+    # Allow alphanumeric and underscores, must start with letter (lowercase for GraphQL convention)
+    pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+    return bool(pattern.match(name))
+
+
+def _collect_template(
+    existing_template_names: set[str],
+    contract_names: list[str],
+) -> TemplateConfig:
+    """Collect configuration for a dynamic data source template.
+    
+    Args:
+        existing_template_names: Set of already-used template names.
+        contract_names: List of contract names that can be the source for this template.
+    
+    Returns:
+        TemplateConfig for the template.
+    """
+    print("\n--- Template Configuration ---")
+    print("Templates define dynamic data sources that are instantiated at runtime.")
+    print("For example, a factory contract creates new contracts that should be indexed.\n")
+    
+    # Get template name
+    while True:
+        name = ask_string(
+            "Template name (e.g., Pair, Pool, Vault)",
+            validator=_validate_template_name,
+            error_message="Invalid name. Use letters, numbers, and underscores. Must start with a letter."
+        )
+        if name in existing_template_names:
+            print(f"A template named '{name}' already exists. Please choose a different name.")
+            continue
+        break
+    
+    # Get ABI path
+    abi_path = ask_string(
+        f"ABI filename for {name} (e.g., {name}.json)",
+        default=f"{name}.json"
+    )
+    
+    # Get source contract (the factory contract that creates instances)
+    print(f"\nWhich contract creates/instantiates {name} instances?")
+    source_contract = ask_choice(
+        "Select source (factory) contract",
+        contract_names,
+        default_index=0
+    )
+    
+    # Get source event (the event that signals a new instance)
+    source_event = ask_string(
+        f"Event name that signals new {name} creation (e.g., PairCreated, PoolCreated)",
+        validator=_validate_event_name,
+        error_message="Invalid event name. Use letters, numbers, and underscores. Must start with a letter."
+    )
+    
+    # Get event handlers for the template
+    print(f"\nWhat events should be indexed from {name} instances?")
+    event_handlers = ask_string_list(
+        f"Enter event names to handle in {name}:",
+        item_name="event name",
+        validator=_validate_event_name,
+        error_message="Invalid event name. Use letters, numbers, and underscores. Must start with a letter."
+    )
+    
+    if not event_handlers:
+        # Require at least one event handler
+        print("⚠️  At least one event handler is required. Adding 'Transfer' as default.")
+        event_handlers = ["Transfer"]
+    
+    # Ask about index_events
+    index_events = ask_yes_no(
+        f"Index all events from {name} instances (recommended)?",
+        default=True
+    )
+    
+    # Ask about call handlers
+    call_handlers: list[str] | None = None
+    if ask_yes_no(f"Enable call handlers for {name}?", default=False):
+        print(f"\nCall handlers index function calls to {name} contracts.")
+        print("Example signatures: transfer(address,uint256), approve(address,uint256)")
+        
+        call_handlers = ask_string_list(
+            "Enter function signatures to index:",
+            item_name="signature",
+            validator=_validate_call_handler_signature,
+            error_message="Invalid signature format. Use: functionName(type1,type2,...)"
+        )
+        
+        if not call_handlers:
+            call_handlers = None
+    
+    # Ask about block handler
+    block_handler = ask_yes_no(
+        f"Enable block handler for {name} instances?",
+        default=False
+    )
+    
+    return TemplateConfig(
+        name=name,
+        abi_path=abi_path,
+        event_handlers=event_handlers,
+        source_contract=source_contract,
+        source_event=source_event,
+        index_events=index_events,
+        call_handlers=call_handlers,
+        block_handler=block_handler,
+    )
+
+
+def _collect_entity_relationship(
+    existing_relationships: list[EntityRelationship],
+) -> EntityRelationship:
+    """Collect configuration for an entity relationship.
+    
+    Args:
+        existing_relationships: List of already-defined relationships.
+    
+    Returns:
+        EntityRelationship for the relationship.
+    """
+    print("\n--- Entity Relationship Configuration ---")
+    print("Relationships define how entities reference each other in the schema.")
+    print("Example: A Pool entity has a 'factory' field referencing a Factory entity.\n")
+    
+    # Get from_entity
+    from_entity = ask_string(
+        "Source entity name (entity that will have the field)",
+        validator=_validate_entity_name,
+        error_message="Invalid entity name. Use letters, numbers, and underscores. Must start with a letter."
+    )
+    
+    # Get to_entity
+    to_entity = ask_string(
+        "Target entity name (entity being referenced)",
+        validator=_validate_entity_name,
+        error_message="Invalid entity name. Use letters, numbers, and underscores. Must start with a letter."
+    )
+    
+    # Get field_name
+    print(f"\nWhat should the field be named on {from_entity}?")
+    default_field = to_entity[0].lower() + to_entity[1:] if to_entity else "reference"
+    field_name = ask_string(
+        f"Field name (e.g., {default_field})",
+        default=default_field,
+        validator=_validate_field_name,
+        error_message="Invalid field name. Use letters, numbers, and underscores. Must start with a letter."
+    )
+    
+    # Get relation_type
+    print(f"\nRelationship type from {from_entity} to {to_entity}:")
+    print("  - one_to_one: Single reference (e.g., Pool -> Factory)")
+    print("  - one_to_many: Array of references (e.g., Factory -> [Pool])")
+    print("  - many_to_many: Many-to-many relationship (e.g., User <-> Token)")
+    relation_type = ask_choice(
+        "Select relationship type",
+        ["one_to_one", "one_to_many", "many_to_many"],
+        default_index=0
+    )
+    
+    # Get derived_from (optional, for reverse lookups)
+    derived_from: str | None = None
+    if ask_yes_no(f"Is {field_name} a derived field (computed from reverse lookup)?", default=False):
+        derived_from = ask_string(
+            f"Field on {to_entity} that references back to {from_entity}",
+            validator=_validate_field_name,
+            error_message="Invalid field name. Use letters, numbers, and underscores. Must start with a letter."
+        )
+    
+    return EntityRelationship(
+        from_entity=from_entity,
+        to_entity=to_entity,
+        relation_type=relation_type,
+        field_name=field_name,
+        derived_from=derived_from,
+    )
+
+
 def _collect_contract(
     network: str,
     existing_names: set[str],
@@ -208,7 +456,7 @@ def _collect_contract(
         network: Network name (for explorer fetch).
         existing_names: Set of already-used contract names.
         existing_addresses: Set of already-used contract addresses.
-        complexity: Complexity level ('basic' or 'intermediate').
+        complexity: Complexity level ('basic', 'intermediate', or 'advanced').
     
     Returns:
         ContractConfig for the contract.
@@ -255,9 +503,9 @@ def _collect_contract(
     call_handlers: list[str] | None = None
     block_handler = False
     
-    # Collect intermediate complexity options if applicable
-    if complexity == "intermediate":
-        print("\n--- Intermediate Complexity Options ---")
+    # Collect intermediate/advanced complexity options if applicable
+    if complexity in ("intermediate", "advanced"):
+        print("\n--- Advanced Handler Options ---")
         
         # Ask about call handlers
         if ask_yes_no("Enable call handlers for this contract?", default=False):
@@ -345,15 +593,22 @@ def run_wizard() -> SubgraphConfig:
     print("\nComplexity level determines which indexing features are available:")
     print("  - basic: Index events only (recommended for most use cases)")
     print("  - intermediate: Events + call handlers + block handlers")
+    print("  - advanced: All features + dynamic data sources (templates) + entity relationships")
     complexity = ask_choice(
         "Select complexity level",
-        ["basic", "intermediate"],
+        ["basic", "intermediate", "advanced"],
         default_index=0
     )
     
     if complexity == "intermediate":
         print("\n📋 Intermediate mode enabled!")
         print("   You can configure call handlers and block handlers for each contract.")
+    elif complexity == "advanced":
+        print("\n🚀 Advanced mode enabled!")
+        print("   You can configure:")
+        print("   - Call handlers and block handlers for each contract")
+        print("   - Dynamic data source templates (e.g., factory patterns)")
+        print("   - Entity relationships for schema generation")
     
     # Step 5: Mapping mode
     print("\nMapping mode determines how event handlers are generated:")
@@ -409,12 +664,83 @@ def run_wizard() -> SubgraphConfig:
         if not ask_yes_no("\nAdd another contract?", default=False):
             break
     
+    # Collect advanced complexity features: templates and entity relationships
+    templates: list[TemplateConfig] = []
+    entity_relationships: list[EntityRelationship] = []
+    template_abis: dict[str, list[dict[str, Any]]] = {}
+    
+    if complexity == "advanced":
+        # Collect templates (dynamic data sources)
+        print("\n" + "-" * 40)
+        print("Dynamic Data Source Templates")
+        print("-" * 40)
+        print("\nTemplates are used to index contracts created at runtime.")
+        print("For example: Uniswap V2 Factory creates Pair contracts dynamically.")
+        
+        existing_template_names: set[str] = set()
+        contract_names_list = [c.name for c in contracts]
+        
+        if ask_yes_no("\nDo you want to add dynamic data source templates?", default=False):
+            while True:
+                template = _collect_template(existing_template_names, contract_names_list)
+                
+                # Get ABI for this template
+                print(f"\nProvide ABI for template '{template.name}':")
+                try:
+                    template_abi = _get_abi_for_contract(
+                        template.name,
+                        network,
+                        "0x0000000000000000000000000000000000000000"  # Placeholder - templates don't have fixed address
+                    )
+                except SubgraphWizardError as e:
+                    print(f"\nFailed to get ABI: {e}")
+                    if ask_yes_no("Skip this template and continue?", default=False):
+                        continue
+                    else:
+                        raise
+                
+                templates.append(template)
+                template_abis[template.name] = template_abi
+                existing_template_names.add(template.name)
+                
+                print(f"\n✓ Added template: {template.name}")
+                print(f"   Source: {template.source_contract}.{template.source_event}")
+                print(f"   Event handlers: {', '.join(template.event_handlers)}")
+                
+                if not ask_yes_no("\nAdd another template?", default=False):
+                    break
+        
+        # Collect entity relationships
+        print("\n" + "-" * 40)
+        print("Entity Relationships")
+        print("-" * 40)
+        print("\nRelationships define how entities reference each other in the schema.")
+        print("This enables generating proper GraphQL relationships and derived fields.")
+        
+        if ask_yes_no("\nDo you want to define entity relationships?", default=False):
+            while True:
+                relationship = _collect_entity_relationship(entity_relationships)
+                entity_relationships.append(relationship)
+                
+                print(f"\n✓ Added relationship: {relationship.from_entity}.{relationship.field_name} -> {relationship.to_entity}")
+                print(f"   Type: {relationship.relation_type}")
+                if relationship.derived_from:
+                    print(f"   Derived from: {relationship.to_entity}.{relationship.derived_from}")
+                
+                if not ask_yes_no("\nAdd another relationship?", default=False):
+                    break
+    
     # Expand ~ to user's home directory before building config
     output_path = Path(output_dir).expanduser()
     expanded_output_dir = str(output_path)
     
     # Determine config version based on complexity
-    config_version = 2 if complexity == "intermediate" else 1
+    if complexity == "advanced":
+        config_version = 3
+    elif complexity == "intermediate":
+        config_version = 2
+    else:
+        config_version = 1
     
     # Build the config
     config = SubgraphConfig(
@@ -424,7 +750,9 @@ def run_wizard() -> SubgraphConfig:
         mappings_mode=mapping_mode,
         contracts=contracts,
         config_version=config_version,
-        complexity=complexity
+        complexity=complexity,
+        templates=templates,
+        entity_relationships=entity_relationships,
     )
     
     # Validate the config
@@ -448,6 +776,14 @@ def run_wizard() -> SubgraphConfig:
         write_abi_to_file(abi, abi_path)
         print(f"  ✓ Wrote ABI: {abi_path}")
     
+    # Write template ABIs (for advanced complexity)
+    for template in templates:
+        if template.name in template_abis:
+            abi = template_abis[template.name]
+            abi_path = abis_dir / template.abi_path
+            write_abi_to_file(abi, abi_path)
+            print(f"  ✓ Wrote template ABI: {abi_path}")
+    
     # Save config file
     config_path = output_path / "subgraph-config.json"
     save_config(config, config_path)
@@ -463,8 +799,8 @@ def run_wizard() -> SubgraphConfig:
     print(f"Mapping mode: {config.mappings_mode}")
     print(f"Output: {config.output_dir}")
     
-    # Show intermediate features summary
-    if config.complexity == "intermediate":
+    # Show intermediate/advanced features summary
+    if config.complexity in ("intermediate", "advanced"):
         contracts_with_call = [c.name for c in config.contracts if c.call_handlers]
         contracts_with_block = [c.name for c in config.contracts if c.block_handler]
         
@@ -472,5 +808,17 @@ def run_wizard() -> SubgraphConfig:
             print(f"\nContracts with call handlers: {', '.join(contracts_with_call)}")
         if contracts_with_block:
             print(f"Contracts with block handlers: {', '.join(contracts_with_block)}")
+    
+    # Show advanced features summary
+    if config.complexity == "advanced":
+        if config.templates:
+            print(f"\nTemplates: {len(config.templates)}")
+            for t in config.templates:
+                print(f"  - {t.name} (from {t.source_contract}.{t.source_event})")
+        
+        if config.entity_relationships:
+            print(f"\nEntity relationships: {len(config.entity_relationships)}")
+            for r in config.entity_relationships:
+                print(f"  - {r.from_entity}.{r.field_name} -> {r.to_entity} ({r.relation_type})")
     
     return config

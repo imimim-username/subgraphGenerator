@@ -1,0 +1,42 @@
+{
+  "config_version": 3,
+  "name": "uniswap-v2-subgraph",
+  "network": "ethereum",
+  "output_dir": "output/uniswap-v2",
+  "complexity": "advanced",
+  "mappings_mode": "auto",
+  "contracts": [
+    {
+      "name": "Factory",
+      "address": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+      "start_block": 10000835,
+      "abi_path": "Factory.json",
+      "index_events": true
+    }
+  ],
+  "templates": [
+    {
+      "name": "Pair",
+      "abi_path": "Pair.json",
+      "event_handlers": ["Swap", "Sync", "Mint", "Burn"],
+      "source_contract": "Factory",
+      "source_event": "PairCreated",
+      "index_events": true
+    }
+  ],
+  "entity_relationships": [
+    {
+      "from_entity": "Swap",
+      "to_entity": "Factory",
+      "relation_type": "one_to_one",
+      "field_name": "factory"
+    },
+    {
+      "from_entity": "Factory",
+      "to_entity": "Swap",
+      "relation_type": "one_to_many",
+      "field_name": "swaps",
+      "derived_from": "factory"
+    }
+  ]
+}

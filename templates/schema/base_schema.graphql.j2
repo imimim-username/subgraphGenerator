@@ -5,7 +5,11 @@
 type {{ entity.name }} @entity {
   id: ID!
 {% for field in entity.fields %}
+{% if field.derived_from %}
+  {{ field.name }}: {{ field.type }} @derivedFrom(field: "{{ field.derived_from }}")
+{% else %}
   {{ field.name }}: {{ field.type }}{{ "!" if field.required else "" }}
+{% endif %}
 {% endfor %}
   blockNumber: BigInt!
   blockTimestamp: BigInt!

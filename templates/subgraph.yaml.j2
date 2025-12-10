@@ -21,6 +21,10 @@ dataSources:
       abis:
         - name: {{ contract.name }}
           file: ./abis/{{ contract.abi_path }}
+{% for template_abi in contract.template_abis | default([]) %}
+        - name: {{ template_abi.name }}
+          file: ./abis/{{ template_abi.path }}
+{% endfor %}
 {% if contract.event_handlers %}
       eventHandlers:
 {% for handler in contract.event_handlers %}
@@ -41,4 +45,44 @@ dataSources:
 {% endif %}
       file: ./src/mappings/{{ contract.name }}.ts
 {% endfor %}
+{% if templates %}
+templates:
+{% for template in templates %}
+  - kind: ethereum
+    name: {{ template.name }}
+    network: {{ network }}
+    source:
+      abi: {{ template.name }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+{% for entity in template.entities %}
+        - {{ entity }}
+{% endfor %}
+      abis:
+        - name: {{ template.name }}
+          file: ./abis/{{ template.abi_path }}
+{% if template.event_handlers %}
+      eventHandlers:
+{% for handler in template.event_handlers %}
+        - event: {{ handler.event_signature }}
+          handler: {{ handler.handler_name }}
+{% endfor %}
+{% endif %}
+{% if template.call_handlers %}
+      callHandlers:
+{% for handler in template.call_handlers %}
+        - function: {{ handler.function_signature }}
+          handler: {{ handler.handler_name }}
+{% endfor %}
+{% endif %}
+{% if template.block_handler %}
+      blockHandlers:
+        - handler: {{ template.block_handler_name }}
+{% endif %}
+      file: ./src/mappings/{{ template.name }}.ts
+{% endfor %}
+{% endif %}
 
