@@ -95,9 +95,31 @@ class TestRunFromArgs:
             call_args = mock_print.call_args[0][0]
             assert "subgraph-wizard version" in call_args
 
+    @patch('subgraph_wizard.cli.ask_yes_no')
+    @patch('subgraph_wizard.cli.run_wizard')
     @patch('subgraph_wizard.cli.logger')
-    def test_run_from_args_no_flags(self, mock_logger):
-        """Test running with no flags (interactive mode)."""
+    def test_run_from_args_no_flags(self, mock_logger, mock_run_wizard, mock_ask_yes_no):
+        """Test running with no flags (interactive mode) starts wizard."""
+        from subgraph_wizard.config.model import SubgraphConfig, ContractConfig
+        
+        # Create a mock config to return from wizard
+        mock_config = SubgraphConfig(
+            name="test-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=[
+                ContractConfig(
+                    name="TestToken",
+                    address="0x1234567890123456789012345678901234567890",
+                    start_block=12345678,
+                    abi_path="TestToken.json"
+                )
+            ]
+        )
+        mock_run_wizard.return_value = mock_config
+        mock_ask_yes_no.return_value = False  # Don't generate after wizard
+        
         args = Namespace(
             config=None,
             generate=False,
@@ -106,8 +128,10 @@ class TestRunFromArgs:
         )
         
         run_from_args(args)
-        # Should log interactive wizard mode
+        # Should log interactive wizard mode and run the wizard
         assert mock_logger.info.called
+        mock_run_wizard.assert_called_once()
+        mock_ask_yes_no.assert_called_once()  # Should ask about generating
 
     @patch('subgraph_wizard.cli.validate_config')
     @patch('subgraph_wizard.cli.load_config')

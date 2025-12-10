@@ -7,6 +7,8 @@ from pathlib import Path
 from subgraph_wizard.config.io import load_config
 from subgraph_wizard.config.validation import validate_config
 from subgraph_wizard.generate.orchestrator import generate_subgraph_project
+from subgraph_wizard.interactive_wizard import run_wizard
+from subgraph_wizard.utils.prompts_utils import ask_yes_no
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +103,26 @@ def run_from_args(args):
         
         # Run the generation pipeline
         generate_subgraph_project(config, dry_run=args.dry_run)
-    else:
-        if not args.config:
-            logger.info("Interactive wizard will be implemented in a future milestone.")
+    elif not args.config:
+        # No --config and no --generate: run interactive wizard
+        config = run_wizard()
+        
+        # Ask user if they want to generate now
+        print()
+        if ask_yes_no("Generate subgraph now?", default=True):
+            generate_subgraph_project(config, dry_run=args.dry_run)
+            if args.dry_run:
+                print("\n✓ Dry run complete. No files were written.")
+            else:
+                print("\n✓ Subgraph generated successfully!")
+            print("\nNext steps:")
+            print(f"  1. cd {config.output_dir}")
+            print("  2. npm install  (or yarn)")
+            print("  3. graph codegen")
+            print("  4. graph build")
+        else:
+            print("\nTo generate later, run:")
+            print(f"  subgraph-wizard --config {config.output_dir}/subgraph-config.json --generate")
 
 
 if __name__ == "__main__":
