@@ -700,9 +700,9 @@ This milestone is intentionally more flexible and should be guided by your real 
   - [x] `docs/development-notes.md` – contributing guidelines, branch/PR conventions, how to run tests/CI.
 
 - [x] Confirm `.env.example` contains all relevant env vars actually used in code.
-- [ ] Optionally add CI configuration (e.g., GitHub Actions) to:
-  - Run `pytest`.
-  - (Optionally) run linting/formatting.
+- [x] Optionally add CI configuration (e.g., GitHub Actions) to:
+  - [x] Run `pytest`.
+  - [x] (Optionally) run linting/formatting.
 
 ### Tests / Acceptance Criteria
 
