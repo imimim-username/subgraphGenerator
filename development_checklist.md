@@ -706,11 +706,11 @@ This milestone is intentionally more flexible and should be guided by your real 
 
 ### Tests / Acceptance Criteria
 
-- [ ] Manual walkthrough:
+- [x] Manual walkthrough:
   - Fresh clone of repo.
   - Follow `README` Quickstart end-to-end.
   - Confirm all steps work.
-- [ ] CI passes (if configured).
+- [x] CI passes (if configured).
 
 **PR:** _Align documentation, examples, and polish with the final implementation_
 
