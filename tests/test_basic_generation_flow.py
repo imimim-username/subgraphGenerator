@@ -106,7 +106,7 @@ class TestGenerateSubgraphProject:
         generate_subgraph_project(sample_config)
         
         content = (Path(sample_config.output_dir) / "schema.graphql").read_text()
-        assert "type TestTokenEvent @entity" in content
+        assert "type TestTokenEvent @entity(immutable: true)" in content
     
     def test_schema_contains_standard_fields(self, sample_config):
         """Test that schema entities have standard metadata fields."""
@@ -147,8 +147,8 @@ class TestGenerateSubgraphProject:
         generate_subgraph_project(multi_contract_config)
         
         content = (Path(multi_contract_config.output_dir) / "schema.graphql").read_text()
-        assert "type TokenAEvent @entity" in content
-        assert "type TokenBEvent @entity" in content
+        assert "type TokenAEvent @entity(immutable: true)" in content
+        assert "type TokenBEvent @entity(immutable: true)" in content
     
     def test_dry_run_does_not_create_files(self, sample_config):
         """Test that dry run mode does not create any files."""

@@ -219,9 +219,9 @@ class TestSchemaGraphqlContent:
         content = schema_path.read_text()
         
         # The sample ABI has Transfer and Approval events
-        assert "type Transfer @entity" in content, \
+        assert "type Transfer @entity(immutable: true)" in content, \
             "Schema should have Transfer entity"
-        assert "type Approval @entity" in content, \
+        assert "type Approval @entity(immutable: true)" in content, \
             "Schema should have Approval entity"
     
     def test_entity_has_id_field(self, basic_config_with_abi):
