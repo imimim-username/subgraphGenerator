@@ -2,13 +2,21 @@
 
 import pytest
 
-from subgraph_wizard.config.model import ContractConfig, SubgraphConfig
+from subgraph_wizard.config.model import (
+    ContractConfig,
+    SubgraphConfig,
+    TemplateConfig,
+    EntityRelationship,
+)
 from subgraph_wizard.config.validation import (
     validate_config,
     validate_contract,
     validate_address,
+    validate_template,
+    validate_entity_relationship,
     VALID_MAPPING_MODES,
     VALID_COMPLEXITY_LEVELS,
+    VALID_RELATION_TYPES,
 )
 from subgraph_wizard.errors import ValidationError
 from subgraph_wizard.networks import SUPPORTED_NETWORKS
@@ -266,7 +274,7 @@ class TestValidateConfig:
     # Complexity tests
     def test_invalid_config_unsupported_complexity(self):
         """Test that unsupported complexity fails validation."""
-        config = make_valid_config(complexity="advanced")
+        config = make_valid_config(complexity="super-advanced")
         
         with pytest.raises(ValidationError) as exc_info:
             validate_config(config)
@@ -482,12 +490,242 @@ class TestIntermediateComplexity:
         config = make_valid_config(complexity="intermediate", config_version=2)
         validate_config(config)  # Should not raise
     
-    def test_advanced_complexity_not_supported(self):
-        """Test that advanced complexity is not yet supported."""
-        config = make_valid_config(complexity="advanced")
+    def test_advanced_complexity_supported(self):
+        """Test that advanced complexity is now supported."""
+        config = make_valid_config(complexity="advanced", config_version=3)
+        validate_config(config)  # Should not raise
+
+
+def make_valid_template(
+    name="PairTemplate",
+    abi_path="Pair.json",
+    event_handlers=None,
+    source_contract="Factory",
+    source_event="PairCreated",
+    index_events=True,
+):
+    """Helper to create a valid TemplateConfig for testing."""
+    if event_handlers is None:
+        event_handlers = ["Swap", "Sync"]
+    return TemplateConfig(
+        name=name,
+        abi_path=abi_path,
+        event_handlers=event_handlers,
+        source_contract=source_contract,
+        source_event=source_event,
+        index_events=index_events,
+    )
+
+
+def make_valid_relationship(
+    from_entity="Pool",
+    to_entity="Factory",
+    relation_type="one_to_one",
+    field_name="factory",
+    derived_from=None,
+):
+    """Helper to create a valid EntityRelationship for testing."""
+    return EntityRelationship(
+        from_entity=from_entity,
+        to_entity=to_entity,
+        relation_type=relation_type,
+        field_name=field_name,
+        derived_from=derived_from,
+    )
+
+
+class TestAdvancedComplexity:
+    """Tests for advanced complexity features (templates and entity relationships)."""
+    
+    def test_config_version_3_supported(self):
+        """Test that config version 3 is supported."""
+        config = make_valid_config(config_version=3, complexity="advanced")
+        validate_config(config)  # Should not raise
+    
+    def test_valid_advanced_config_with_templates(self):
+        """Test that advanced config with templates passes validation."""
+        contracts = [make_valid_contract(name="Factory")]
+        template = make_valid_template(source_contract="Factory")
+        
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=contracts,
+            config_version=3,
+            complexity="advanced",
+            templates=[template],
+        )
+        validate_config(config)  # Should not raise
+    
+    def test_valid_advanced_config_with_relationships(self):
+        """Test that advanced config with entity relationships passes validation."""
+        contracts = [make_valid_contract(name="Factory")]
+        relationship = make_valid_relationship(from_entity="Pool", to_entity="Factory")
+        
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=contracts,
+            config_version=3,
+            complexity="advanced",
+            entity_relationships=[relationship],
+        )
+        validate_config(config)  # Should not raise
+    
+    def test_invalid_template_empty_name(self):
+        """Test that template with empty name fails validation."""
+        template = make_valid_template(name="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_template(template, {"Factory"})
+        
+        assert "name" in str(exc_info.value).lower()
+    
+    def test_invalid_template_empty_abi_path(self):
+        """Test that template with empty abi_path fails validation."""
+        template = make_valid_template(abi_path="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_template(template, {"Factory"})
+        
+        assert "abi" in str(exc_info.value).lower()
+    
+    def test_invalid_template_unknown_source_contract(self):
+        """Test that template referencing unknown source contract fails validation."""
+        template = make_valid_template(source_contract="UnknownFactory")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_template(template, {"Factory"})
+        
+        assert "source_contract" in str(exc_info.value).lower()
+    
+    def test_invalid_template_empty_source_event(self):
+        """Test that template with empty source_event fails validation."""
+        template = make_valid_template(source_event="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_template(template, {"Factory"})
+        
+        assert "source event" in str(exc_info.value).lower()
+    
+    def test_invalid_template_no_event_handlers(self):
+        """Test that template with no event handlers fails validation."""
+        template = make_valid_template(event_handlers=[])
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_template(template, {"Factory"})
+        
+        assert "event handler" in str(exc_info.value).lower()
+    
+    def test_invalid_relationship_empty_from_entity(self):
+        """Test that relationship with empty from_entity fails validation."""
+        relationship = make_valid_relationship(from_entity="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_entity_relationship(relationship, {"Factory"}, set())
+        
+        assert "from_entity" in str(exc_info.value).lower()
+    
+    def test_invalid_relationship_empty_to_entity(self):
+        """Test that relationship with empty to_entity fails validation."""
+        relationship = make_valid_relationship(to_entity="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_entity_relationship(relationship, {"Factory"}, set())
+        
+        assert "to_entity" in str(exc_info.value).lower()
+    
+    def test_invalid_relationship_empty_field_name(self):
+        """Test that relationship with empty field_name fails validation."""
+        relationship = make_valid_relationship(field_name="")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_entity_relationship(relationship, {"Factory"}, set())
+        
+        assert "field_name" in str(exc_info.value).lower()
+    
+    def test_invalid_relationship_bad_relation_type(self):
+        """Test that relationship with invalid relation_type fails validation."""
+        relationship = make_valid_relationship(relation_type="invalid_type")
+        
+        with pytest.raises(ValidationError) as exc_info:
+            validate_entity_relationship(relationship, {"Factory"}, set())
+        
+        assert "relation_type" in str(exc_info.value).lower()
+    
+    def test_valid_relationship_all_relation_types(self):
+        """Test that all valid relation types pass validation."""
+        for rel_type in VALID_RELATION_TYPES:
+            relationship = make_valid_relationship(relation_type=rel_type)
+            validate_entity_relationship(relationship, {"Factory"}, set())  # Should not raise
+    
+    def test_duplicate_template_names_fail_validation(self):
+        """Test that duplicate template names fail validation."""
+        contracts = [make_valid_contract(name="Factory")]
+        template1 = make_valid_template(name="SameTemplate")
+        template2 = make_valid_template(name="SameTemplate")
+        
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=contracts,
+            config_version=3,
+            complexity="advanced",
+            templates=[template1, template2],
+        )
         
         with pytest.raises(ValidationError) as exc_info:
             validate_config(config)
         
-        assert "complexity" in str(exc_info.value).lower()
+        assert "duplicate" in str(exc_info.value).lower()
+    
+    def test_templates_ignored_for_basic_complexity(self, caplog):
+        """Test that templates are warned about when complexity is basic."""
+        import logging
+        caplog.set_level(logging.WARNING)
+        
+        contracts = [make_valid_contract(name="Factory")]
+        template = make_valid_template(source_contract="Factory")
+        
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=contracts,
+            config_version=1,
+            complexity="basic",
+            templates=[template],
+        )
+        validate_config(config)  # Should not raise, but warn
+        
+        assert any("template" in record.message.lower() for record in caplog.records)
+    
+    def test_relationships_ignored_for_intermediate_complexity(self, caplog):
+        """Test that relationships are warned about when complexity is intermediate."""
+        import logging
+        caplog.set_level(logging.WARNING)
+        
+        contracts = [make_valid_contract()]
+        relationship = make_valid_relationship()
+        
+        config = SubgraphConfig(
+            name="my-subgraph",
+            network="ethereum",
+            output_dir="./output",
+            mappings_mode="auto",
+            contracts=contracts,
+            config_version=2,
+            complexity="intermediate",
+            entity_relationships=[relationship],
+        )
+        validate_config(config)  # Should not raise, but warn
+        
+        assert any("relationship" in record.message.lower() for record in caplog.records)
 

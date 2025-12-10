@@ -655,7 +655,7 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 This milestone is intentionally more flexible and should be guided by your real advanced use cases.
 
-- [ ] Extend `SubgraphConfig` to model advanced concepts:
+- [x] Extend `SubgraphConfig` to model advanced concepts:
   - Dynamic data sources and templates.
   - Potential relationships between entities and multiple contracts.
 - [ ] Extend wizard to:
