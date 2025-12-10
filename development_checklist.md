@@ -668,9 +668,9 @@ This milestone is intentionally more flexible and should be guided by your real 
   - Mapping generators:
     - Add mapping code needed to instantiate and manage dynamic data sources.
 
-- [ ] Update docs:
-  - `docs/config-format.md` – advanced fields.
-  - `docs/user-guide.md` – examples of advanced configs.
+- [x] Update docs:
+  - [x] `docs/config-format.md` – advanced fields.
+  - [x] `docs/user-guide.md` – examples of advanced configs.
 
 ### Tests / Acceptance Criteria
 
