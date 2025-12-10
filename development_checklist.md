@@ -694,12 +694,12 @@ This milestone is intentionally more flexible and should be guided by your real 
   - [x] Add “Quickstart” section (install, basic example).
   - [x] Show both interactive wizard and config-driven workflows.
 - [x] Update `docs/architecture.md` if anything changed vs original plan.
-- [ ] Flesh out:
-  - [ ] `docs/user-guide.md` – detailed usage.
-  - [ ] `docs/config-format.md` – config schema for all complexity levels.
-  - [ ] `docs/development-notes.md` – contributing guidelines, branch/PR conventions, how to run tests/CI.
+- [x] Flesh out:
+  - [x] `docs/user-guide.md` – detailed usage.
+  - [x] `docs/config-format.md` – config schema for all complexity levels.
+  - [x] `docs/development-notes.md` – contributing guidelines, branch/PR conventions, how to run tests/CI.
 
-- [ ] Confirm `.env.example` contains all relevant env vars actually used in code.
+- [x] Confirm `.env.example` contains all relevant env vars actually used in code.
 - [ ] Optionally add CI configuration (e.g., GitHub Actions) to:
   - Run `pytest`.
   - (Optionally) run linting/formatting.
