@@ -658,7 +658,7 @@ This milestone is intentionally more flexible and should be guided by your real 
 - [x] Extend `SubgraphConfig` to model advanced concepts:
   - Dynamic data sources and templates.
   - Potential relationships between entities and multiple contracts.
-- [ ] Extend wizard to:
+- [x] Extend wizard to:
   - Offer `complexity = "advanced"`.
   - Collect required advanced options in a manageable way.
 
