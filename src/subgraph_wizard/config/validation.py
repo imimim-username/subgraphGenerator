@@ -12,11 +12,13 @@ logger = logging.getLogger(__name__)
 # Valid mapping modes
 VALID_MAPPING_MODES = {"stub", "auto"}
 
-# Valid complexity levels (start with basic only as per milestone 2)
-VALID_COMPLEXITY_LEVELS = {"basic"}
+# Valid complexity levels
+VALID_COMPLEXITY_LEVELS = {"basic", "intermediate"}
 
 # Supported config versions
-SUPPORTED_CONFIG_VERSIONS = {1}
+# Version 1: Basic complexity only (events)
+# Version 2: Adds intermediate complexity (call/block handlers)
+SUPPORTED_CONFIG_VERSIONS = {1, 2}
 
 # Regex for Ethereum address validation: 0x followed by exactly 40 hex characters
 ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -39,11 +41,44 @@ def validate_address(address: str, contract_name: str) -> None:
         )
 
 
-def validate_contract(contract: ContractConfig) -> None:
+def validate_call_handler_signature(signature: str, contract_name: str) -> None:
+    """Validate a call handler function signature.
+    
+    Call handler signatures should be in the format: functionName(type1,type2,...)
+    
+    Args:
+        signature: Function signature string.
+        contract_name: Name of the contract (for error messages).
+    
+    Raises:
+        ValidationError: If the signature is invalid.
+    """
+    if not signature or not signature.strip():
+        raise ValidationError(
+            f"Empty call handler signature for contract '{contract_name}'"
+        )
+    
+    # Basic format check: should have parentheses
+    if "(" not in signature or ")" not in signature:
+        raise ValidationError(
+            f"Invalid call handler signature for contract '{contract_name}': '{signature}'. "
+            f"Expected format: functionName(type1,type2,...)"
+        )
+    
+    # Check function name is not empty
+    func_name = signature.split("(")[0].strip()
+    if not func_name:
+        raise ValidationError(
+            f"Call handler signature missing function name for contract '{contract_name}': '{signature}'"
+        )
+
+
+def validate_contract(contract: ContractConfig, complexity: str = "basic") -> None:
     """Validate a single contract configuration.
     
     Args:
         contract: ContractConfig instance to validate.
+        complexity: Complexity level of the subgraph config.
     
     Raises:
         ValidationError: If the contract configuration is invalid.
@@ -67,6 +102,27 @@ def validate_contract(contract: ContractConfig) -> None:
         raise ValidationError(
             f"ABI path cannot be empty for contract '{contract.name}'"
         )
+    
+    # Validate intermediate complexity fields
+    if complexity == "intermediate":
+        # Validate call handlers if provided
+        if contract.call_handlers:
+            for signature in contract.call_handlers:
+                validate_call_handler_signature(signature, contract.name)
+        
+        # block_handler is just a boolean, no additional validation needed
+    elif complexity == "basic":
+        # Warn if intermediate features are used with basic complexity
+        if contract.call_handlers:
+            logger.warning(
+                f"Contract '{contract.name}' has call_handlers but complexity is 'basic'. "
+                f"Call handlers will be ignored."
+            )
+        if contract.block_handler:
+            logger.warning(
+                f"Contract '{contract.name}' has block_handler enabled but complexity is 'basic'. "
+                f"Block handler will be ignored."
+            )
 
 
 def validate_config(config: SubgraphConfig) -> None:
@@ -121,16 +177,16 @@ def validate_config(config: SubgraphConfig) -> None:
         raise ValidationError(
             f"Invalid complexity: '{config.complexity}'. "
             f"Must be one of: {', '.join(sorted(VALID_COMPLEXITY_LEVELS))} "
-            f"(intermediate and advanced will be supported in future milestones)"
+            f"(advanced will be supported in a future milestone)"
         )
     
     # Validate contracts list is not empty
     if not config.contracts:
         raise ValidationError("At least one contract must be specified")
     
-    # Validate each contract
+    # Validate each contract, passing complexity for intermediate field validation
     for contract in config.contracts:
-        validate_contract(contract)
+        validate_contract(contract, config.complexity)
     
     # Check for duplicate contract names
     contract_names = [c.name for c in config.contracts]

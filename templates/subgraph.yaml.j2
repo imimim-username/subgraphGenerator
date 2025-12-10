@@ -21,11 +21,24 @@ dataSources:
       abis:
         - name: {{ contract.name }}
           file: ./abis/{{ contract.abi_path }}
+{% if contract.event_handlers %}
       eventHandlers:
 {% for handler in contract.event_handlers %}
         - event: {{ handler.event_signature }}
           handler: {{ handler.handler_name }}
 {% endfor %}
+{% endif %}
+{% if contract.call_handlers %}
+      callHandlers:
+{% for handler in contract.call_handlers %}
+        - function: {{ handler.function_signature }}
+          handler: {{ handler.handler_name }}
+{% endfor %}
+{% endif %}
+{% if contract.block_handler %}
+      blockHandlers:
+        - handler: {{ contract.block_handler_name }}
+{% endif %}
       file: ./src/mappings/{{ contract.name }}.ts
 {% endfor %}
 

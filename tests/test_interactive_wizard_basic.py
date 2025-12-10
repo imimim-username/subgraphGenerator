@@ -96,6 +96,7 @@ class TestRunWizard:
             "test-subgraph",           # Subgraph name
             "1",                       # Network choice (arbitrum - alphabetically first)
             str(output_dir),           # Output directory
+            "1",                       # Complexity choice (basic)
             "1",                       # Mapping mode (auto)
             "TestToken",               # Contract name
             "0x1234567890123456789012345678901234567890",  # Contract address
@@ -151,6 +152,7 @@ class TestRunWizard:
             "test-subgraph",           # Subgraph name
             "1",                       # Network choice
             str(output_dir),           # Output directory
+            "1",                       # Complexity choice (basic)
             "2",                       # Mapping mode (stub)
             "TestToken",               # Contract name
             "0x1234567890123456789012345678901234567890",  # Contract address
@@ -184,6 +186,7 @@ class TestRunWizard:
             "multi-contract",          # Subgraph name
             "2",                       # Network choice (ethereum)
             str(output_dir),           # Output directory
+            "1",                       # Complexity choice (basic)
             "1",                       # Mapping mode (auto)
             # First contract
             "TokenA",                  # Contract name
@@ -228,6 +231,7 @@ class TestRunWizard:
             "test-subgraph",           # Subgraph name
             "1",                       # Network choice
             str(output_dir),           # Output directory
+            "1",                       # Complexity choice (basic)
             "1",                       # Mapping mode (auto)
             # First contract
             "Token",                   # Contract name

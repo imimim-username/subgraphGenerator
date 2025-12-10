@@ -150,10 +150,55 @@ def _build_mapping_header(
     return render_template("mappings/common_header.ts.j2", context)
 
 
+def _build_call_handler_context(
+    contract: ContractConfig,
+    function_signature: str,
+) -> dict[str, Any]:
+    """Build context for a call handler.
+    
+    Args:
+        contract: Contract configuration.
+        function_signature: Function signature like "transfer(address,uint256)".
+    
+    Returns:
+        Handler context for template rendering.
+    """
+    func_name = function_signature.split("(")[0].strip()
+    handler_name = f"handle{func_name[0].upper()}{func_name[1:]}Call"
+    entity_name = f"{func_name[0].upper()}{func_name[1:]}Call"
+    call_type = f"{func_name[0].upper()}{func_name[1:]}Call"
+    
+    return {
+        "name": handler_name,
+        "function_name": func_name,
+        "call_type": call_type,
+        "entity_name": entity_name,
+        "inputs": [],  # Can be populated from ABI if needed
+        "outputs": [],
+    }
+
+
+def _build_block_handler_context(contract: ContractConfig) -> dict[str, Any]:
+    """Build context for a block handler.
+    
+    Args:
+        contract: Contract configuration.
+    
+    Returns:
+        Block handler context for template rendering.
+    """
+    return {
+        "name": f"handle{contract.name}Block",
+        "contract_name": contract.name,
+        "entity_name": f"{contract.name}Block",
+    }
+
+
 def render_mapping_stub(
     contract: ContractConfig,
     network: str,
     abi: list[dict[str, Any]] | None = None,
+    complexity: str = "basic",
 ) -> str:
     """Render a stub mapping file for a contract.
     
@@ -161,10 +206,14 @@ def render_mapping_stub(
     include TODO comments showing how to implement entity storage.
     When ABI data is provided, handlers are generated for each event.
     
+    For intermediate complexity, call handlers and block handlers are
+    included based on the contract configuration.
+    
     Args:
         contract: Contract configuration.
         network: Network name.
         abi: Optional ABI data for the contract.
+        complexity: Complexity level ('basic' or 'intermediate').
     
     Returns:
         Rendered mapping file content as a string.
@@ -194,6 +243,20 @@ def render_mapping_stub(
         "handlers": handlers,
     }
     
+    # Add intermediate complexity features
+    if complexity == "intermediate":
+        # Add call handlers if configured
+        if contract.call_handlers:
+            call_handlers = [
+                _build_call_handler_context(contract, sig)
+                for sig in contract.call_handlers
+            ]
+            context["call_handlers"] = call_handlers
+        
+        # Add block handler if configured
+        if contract.block_handler:
+            context["block_handler"] = _build_block_handler_context(contract)
+    
     return render_template("mappings/mapping_stub.ts.j2", context)
 
 
@@ -211,11 +274,14 @@ def render_all_mappings_stub(
         Dictionary mapping contract names to rendered mapping content.
     """
     logger.info(f"Rendering stub mappings for {len(config.contracts)} contracts")
+    logger.info(f"Complexity level: {config.complexity}")
     
     result = {}
     for contract in config.contracts:
         abi = abi_map.get(contract.name) if abi_map else None
-        result[contract.name] = render_mapping_stub(contract, config.network, abi)
+        result[contract.name] = render_mapping_stub(
+            contract, config.network, abi, config.complexity
+        )
     
     return result
 

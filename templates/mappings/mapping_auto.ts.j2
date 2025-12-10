@@ -18,4 +18,47 @@ export function {{ handler.name }}(event: {{ handler.event_type }}): void {
 }
 
 {% endfor %}
+{% if call_handlers %}
+// Call Handlers (Intermediate Complexity)
+{% for handler in call_handlers %}
+export function {{ handler.name }}(call: {{ handler.call_type }}): void {
+  let entity = new {{ handler.entity_name }}(
+    call.transaction.hash.concatI32(call.transaction.index.toI32())
+  );
+
+{% for param in handler.inputs %}
+  entity.{{ param.entity_field }} = call.inputs.{{ param.call_param }};
+{% endfor %}
+{% for param in handler.outputs %}
+  entity.{{ param.entity_field }} = call.outputs.{{ param.call_param }};
+{% endfor %}
+
+  entity.blockNumber = call.block.number;
+  entity.blockTimestamp = call.block.timestamp;
+  entity.transactionHash = call.transaction.hash;
+
+  entity.save();
+}
+
+{% endfor %}
+{% endif %}
+{% if block_handler %}
+// Block Handler (Intermediate Complexity)
+export function {{ block_handler.name }}(block: ethereum.Block): void {
+  let entity = new {{ block_handler.entity_name }}(
+    block.hash.toHexString()
+  );
+
+  entity.number = block.number;
+  entity.timestamp = block.timestamp;
+  entity.parentHash = block.parentHash;
+  entity.author = block.author;
+  entity.size = block.size;
+  entity.gasUsed = block.gasUsed;
+  entity.gasLimit = block.gasLimit;
+
+  entity.save();
+}
+
+{% endif %}
 

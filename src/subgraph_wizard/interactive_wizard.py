@@ -20,7 +20,7 @@ from subgraph_wizard.abi.local import load_abi_from_file, write_abi_to_file
 from subgraph_wizard.abi.paste import load_abi_interactive
 from subgraph_wizard.abi.etherscan import fetch_abi_from_explorer, get_supported_networks_for_explorer
 from subgraph_wizard.errors import SubgraphWizardError, ValidationError, AbiFetchError
-from subgraph_wizard.utils.prompts_utils import ask_string, ask_choice, ask_yes_no, ask_int
+from subgraph_wizard.utils.prompts_utils import ask_string, ask_choice, ask_yes_no, ask_int, ask_string_list
 
 logger = logging.getLogger(__name__)
 
@@ -181,13 +181,34 @@ def _get_abi_for_contract(
         raise SubgraphWizardError(f"Unknown ABI source: {choice}")
 
 
-def _collect_contract(network: str, existing_names: set[str], existing_addresses: set[str]) -> ContractConfig:
+def _validate_call_handler_signature(signature: str) -> bool:
+    """Validate a call handler function signature format.
+    
+    Args:
+        signature: Function signature to validate.
+    
+    Returns:
+        True if valid, False otherwise.
+    """
+    if not signature or "(" not in signature or ")" not in signature:
+        return False
+    func_name = signature.split("(")[0].strip()
+    return bool(func_name)
+
+
+def _collect_contract(
+    network: str,
+    existing_names: set[str],
+    existing_addresses: set[str],
+    complexity: str = "basic"
+) -> ContractConfig:
     """Collect configuration for a single contract.
     
     Args:
         network: Network name (for explorer fetch).
         existing_names: Set of already-used contract names.
         existing_addresses: Set of already-used contract addresses.
+        complexity: Complexity level ('basic' or 'intermediate').
     
     Returns:
         ContractConfig for the contract.
@@ -230,12 +251,48 @@ def _collect_contract(network: str, existing_names: set[str], existing_addresses
     # For now, use the contract name
     abi_path = f"{name}.json"
     
+    # Initialize intermediate complexity fields
+    call_handlers: list[str] | None = None
+    block_handler = False
+    
+    # Collect intermediate complexity options if applicable
+    if complexity == "intermediate":
+        print("\n--- Intermediate Complexity Options ---")
+        
+        # Ask about call handlers
+        if ask_yes_no("Enable call handlers for this contract?", default=False):
+            print("\nCall handlers index function calls to the contract.")
+            print("Example signatures: transfer(address,uint256), approve(address,uint256)")
+            
+            call_handlers = ask_string_list(
+                "Enter function signatures to index:",
+                item_name="signature",
+                validator=_validate_call_handler_signature,
+                error_message="Invalid signature format. Use: functionName(type1,type2,...)"
+            )
+            
+            if not call_handlers:
+                print("No call handlers added.")
+                call_handlers = None
+            else:
+                print(f"✓ Added {len(call_handlers)} call handler(s)")
+        
+        # Ask about block handler
+        block_handler = ask_yes_no(
+            "Enable block handler for this contract? (indexes every block)",
+            default=False
+        )
+        if block_handler:
+            print("✓ Block handler enabled")
+    
     return ContractConfig(
         name=name,
         address=address,
         start_block=start_block,
         abi_path=abi_path,
-        index_events=True
+        index_events=True,
+        call_handlers=call_handlers,
+        block_handler=block_handler
     )
 
 
@@ -284,10 +341,19 @@ def run_wizard() -> SubgraphConfig:
         default=default_output_dir
     )
     
-    # Step 4: Complexity (forced to basic for now)
-    print("\nComplexity level: basic")
-    print("(Intermediate and advanced modes will be available in future versions)")
-    complexity = "basic"
+    # Step 4: Complexity level selection
+    print("\nComplexity level determines which indexing features are available:")
+    print("  - basic: Index events only (recommended for most use cases)")
+    print("  - intermediate: Events + call handlers + block handlers")
+    complexity = ask_choice(
+        "Select complexity level",
+        ["basic", "intermediate"],
+        default_index=0
+    )
+    
+    if complexity == "intermediate":
+        print("\n📋 Intermediate mode enabled!")
+        print("   You can configure call handlers and block handlers for each contract.")
     
     # Step 5: Mapping mode
     print("\nMapping mode determines how event handlers are generated:")
@@ -319,7 +385,7 @@ def run_wizard() -> SubgraphConfig:
     
     while True:
         # Collect contract info
-        contract = _collect_contract(network, existing_names, existing_addresses)
+        contract = _collect_contract(network, existing_names, existing_addresses, complexity)
         
         # Get ABI for this contract
         try:
@@ -347,6 +413,9 @@ def run_wizard() -> SubgraphConfig:
     output_path = Path(output_dir).expanduser()
     expanded_output_dir = str(output_path)
     
+    # Determine config version based on complexity
+    config_version = 2 if complexity == "intermediate" else 1
+    
     # Build the config
     config = SubgraphConfig(
         name=subgraph_name,
@@ -354,7 +423,7 @@ def run_wizard() -> SubgraphConfig:
         output_dir=expanded_output_dir,
         mappings_mode=mapping_mode,
         contracts=contracts,
-        config_version=1,
+        config_version=config_version,
         complexity=complexity
     )
     
@@ -389,8 +458,19 @@ def run_wizard() -> SubgraphConfig:
     print("=" * 60)
     print(f"\nSubgraph: {config.name}")
     print(f"Network: {config.network}")
+    print(f"Complexity: {config.complexity}")
     print(f"Contracts: {len(config.contracts)}")
     print(f"Mapping mode: {config.mappings_mode}")
     print(f"Output: {config.output_dir}")
+    
+    # Show intermediate features summary
+    if config.complexity == "intermediate":
+        contracts_with_call = [c.name for c in config.contracts if c.call_handlers]
+        contracts_with_block = [c.name for c in config.contracts if c.block_handler]
+        
+        if contracts_with_call:
+            print(f"\nContracts with call handlers: {', '.join(contracts_with_call)}")
+        if contracts_with_block:
+            print(f"Contracts with block handlers: {', '.join(contracts_with_block)}")
     
     return config
