@@ -15,6 +15,11 @@ export function {{ handler.name }}(event: {{ handler.event_type }}): void {
   entity.transactionHash = event.transaction.hash;
 
   entity.save();
+{% if handler.template_creation %}
+
+  // Create dynamic data source for {{ handler.template_creation.template_name }}
+  {{ handler.template_creation.template_name }}.create(event.params.{{ handler.template_creation.address_param }});
+{% endif %}
 }
 
 {% endfor %}

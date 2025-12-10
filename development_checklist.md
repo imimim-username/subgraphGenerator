@@ -662,7 +662,7 @@ This milestone is intentionally more flexible and should be guided by your real 
   - Offer `complexity = "advanced"`.
   - Collect required advanced options in a manageable way.
 
-- [ ] Extend generators:
+- [x] Extend generators:
   - `generate/subgraph_yaml.py`:
     - Add `templates` and `dynamicDataSources` sections.
   - Mapping generators:
@@ -674,9 +674,9 @@ This milestone is intentionally more flexible and should be guided by your real 
 
 ### Tests / Acceptance Criteria
 
-- [ ] Add advanced fixtures in `tests/fixtures/`.
-- [ ] Add `tests/test_generate_subgraph_yaml_advanced.py` and similar mapping tests.
-- [ ] Add an advanced end-to-end test (semantic checks only, as with basic and intermediate).
+- [x] Add advanced fixtures in `tests/fixtures/`.
+- [x] Add `tests/test_generate_subgraph_yaml_advanced.py` and similar mapping tests.
+- [x] Add an advanced end-to-end test (semantic checks only, as with basic and intermediate).
 
 **PR:** _Add advanced complexity, templates, and dynamic data source support_
 
