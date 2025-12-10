@@ -111,7 +111,7 @@ class TestRenderSchemaWithAbi:
         schema = render_schema(sample_config, abi_map)
         
         # Check entity is named after event
-        assert "type Transfer @entity" in schema
+        assert "type Transfer @entity(immutable: true)" in schema
     
     def test_entity_has_event_params(self, sample_config):
         """Test that entity has fields for event parameters."""
@@ -142,14 +142,22 @@ class TestRenderSchemaWithAbi:
         
         assert "id: ID!" in schema
     
+    def test_entity_has_immutable_directive(self, sample_config):
+        """Test that entity has immutable directive argument."""
+        abi_map = {"TestToken": TRANSFER_ABI}
+        
+        schema = render_schema(sample_config, abi_map)
+        
+        assert "@entity(immutable: true)" in schema
+    
     def test_generates_multiple_entities_from_multiple_events(self, sample_config):
         """Test that multiple events generate multiple entities."""
         abi_map = {"TestToken": MULTI_EVENT_ABI}
         
         schema = render_schema(sample_config, abi_map)
         
-        assert "type Transfer @entity" in schema
-        assert "type Approval @entity" in schema
+        assert "type Transfer @entity(immutable: true)" in schema
+        assert "type Approval @entity(immutable: true)" in schema
     
     def test_handles_various_solidity_types(self, sample_config):
         """Test that various Solidity types are correctly mapped."""
@@ -184,8 +192,8 @@ class TestRenderSchemaWithMultipleContracts:
         # TokenA has Transfer event
         # TokenB has Transfer and Approval events
         # Note: Transfer appears twice but with same definition
-        assert "type Transfer @entity" in schema
-        assert "type Approval @entity" in schema
+        assert "type Transfer @entity(immutable: true)" in schema
+        assert "type Approval @entity(immutable: true)" in schema
 
 
 class TestRenderSchemaWithoutAbi:
@@ -196,13 +204,13 @@ class TestRenderSchemaWithoutAbi:
         schema = render_schema(sample_config, None)
         
         # Should have placeholder entity
-        assert "type TestTokenEvent @entity" in schema
+        assert "type TestTokenEvent @entity(immutable: true)" in schema
     
     def test_generates_placeholder_with_empty_abi_map(self, sample_config):
         """Test that placeholder entity is generated with empty ABI map."""
         schema = render_schema(sample_config, {})
         
-        assert "type TestTokenEvent @entity" in schema
+        assert "type TestTokenEvent @entity(immutable: true)" in schema
     
     def test_generates_placeholder_for_missing_contract(self, multi_contract_config):
         """Test that placeholder is used for contracts without ABI."""
@@ -212,9 +220,9 @@ class TestRenderSchemaWithoutAbi:
         schema = render_schema(multi_contract_config, abi_map)
         
         # TokenA should have Transfer entity
-        assert "type Transfer @entity" in schema
+        assert "type Transfer @entity(immutable: true)" in schema
         # TokenB should have placeholder
-        assert "type TokenBEvent @entity" in schema
+        assert "type TokenBEvent @entity(immutable: true)" in schema
 
 
 class TestGetAllEntitiesForContract:

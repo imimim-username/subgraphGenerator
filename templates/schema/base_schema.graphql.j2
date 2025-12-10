@@ -2,7 +2,7 @@
 # Network: {{ network }}
 
 {% for entity in entities %}
-type {{ entity.name }} @entity {
+type {{ entity.name }} @entity(immutable: true) {
   id: ID!
 {% for field in entity.fields %}
 {% if field.derived_from %}
