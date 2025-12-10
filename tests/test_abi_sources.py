@@ -207,6 +207,25 @@ class TestBuildEventSignature:
     def test_empty_inputs(self):
         sig = build_event_signature("Pause", [])
         assert sig == "Pause()"
+    
+    def test_indexed_parameters(self):
+        """Test that indexed parameters are correctly formatted as 'indexed type'."""
+        inputs = [
+            {"type": "address", "indexed": True},
+            {"type": "address", "indexed": True},
+            {"type": "uint256", "indexed": False}
+        ]
+        sig = build_event_signature("Transfer", inputs)
+        assert sig == "Transfer(indexed address,indexed address,uint256)"
+    
+    def test_mixed_indexed_and_non_indexed(self):
+        """Test events with mixed indexed and non-indexed parameters."""
+        inputs = [
+            {"type": "address", "indexed": True},
+            {"type": "uint256", "indexed": False}
+        ]
+        sig = build_event_signature("BeaconUpgraded", inputs)
+        assert sig == "BeaconUpgraded(indexed address,uint256)"
 
 
 class TestHelperFunctions:

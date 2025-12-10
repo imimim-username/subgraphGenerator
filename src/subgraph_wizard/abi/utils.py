@@ -197,7 +197,7 @@ def build_event_signature(event_name: str, inputs: list[dict]) -> str:
         inputs: List of input parameter definitions.
     
     Returns:
-        Event signature string (e.g., 'Transfer(address,address,uint256)').
+        Event signature string (e.g., 'Transfer(indexed address,indexed address,uint256)').
     """
     param_types = []
     for inp in inputs:
@@ -205,12 +205,13 @@ def build_event_signature(event_name: str, inputs: list[dict]) -> str:
         indexed = inp.get("indexed", False)
         
         # Include 'indexed' keyword for indexed parameters
+        # The Graph format is "indexed type", not "type indexed"
         if indexed:
-            param_types.append(f"{param_type} indexed")
+            param_types.append(f"indexed {param_type}")
         else:
             param_types.append(param_type)
     
-    return f"{event_name}({','.join([inp.get('type', '') for inp in inputs])})"
+    return f"{event_name}({','.join(param_types)})"
 
 
 def get_handler_name(event_name: str) -> str:
