@@ -450,14 +450,14 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 ### Tasks
 
-- [ ] In `utils/prompts_utils.py`:
-  - [ ] Implement helper functions:
+- [x] In `utils/prompts_utils.py`:
+  - [x] Implement helper functions:
     - `ask_string(prompt, default=None)`
     - `ask_choice(prompt, options: list[str], default_index=0)`
     - `ask_yes_no(prompt, default=True)`
 
-- [ ] In `interactive_wizard.py`:
-  - [ ] Implement `run_wizard() -> SubgraphConfig`:
+- [x] In `interactive_wizard.py`:
+  - [x] Implement `run_wizard() -> SubgraphConfig`:
     - Ask for:
       - Subgraph name.
       - Network (from `SUPPORTED_NETWORKS`).
@@ -479,12 +479,12 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
     - Call `validate_config`.
     - Save to `<output_dir>/subgraph-config.json`.
 
-- [ ] In `main.run()` / `cli.run_from_args()`:
-  - [ ] If no `--config` and no `--generate`, run the wizard and then optionally ask the user if they want to generate immediately.
+- [x] In `main.run()` / `cli.run_from_args()`:
+  - [x] If no `--config` and no `--generate`, run the wizard and then optionally ask the user if they want to generate immediately.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_interactive_wizard_basic.py`:
+- [x] `tests/test_interactive_wizard_basic.py`:
   - Use `monkeypatch` to simulate input and `tmp_path` for `output_dir`.
   - Assert a `SubgraphConfig` is built and saved.
   - Assert ABI files are written.
