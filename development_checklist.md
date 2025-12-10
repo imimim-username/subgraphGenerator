@@ -410,16 +410,16 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
 
 ### Tasks
 
-- [ ] Update `.env.example`:
+- [x] Update `.env.example`:
 
-  - [ ] Add:
+  - [x] Add:
     - `ETHERSCAN_API_KEY=`
     - `OPTIMISM_ETHERSCAN_API_KEY=`
     - `ARBITRUM_ETHERSCAN_API_KEY=`
 
-- [ ] In `abi/etherscan.py`:
+- [x] In `abi/etherscan.py`:
 
-  - [ ] Implement `fetch_abi_from_explorer(network: str, address: str) -> list[dict]`:
+  - [x] Implement `fetch_abi_from_explorer(network: str, address: str) -> list[dict]`:
     - Use `SUPPORTED_NETWORKS[network]["explorer"]`.
     - Read relevant API key from environment.
     - Use short timeouts (e.g., 10 seconds).
@@ -429,11 +429,11 @@ This gives you an MVP: config → generated subgraph with `subgraph.yaml`, `sche
       - Provide user-friendly messages like: "Failed to fetch ABI from explorer. Contract may not be verified, or API rate limit exceeded. Please check your API key or try using a local ABI file."
       - Optionally log detailed error info at DEBUG level (with sanitization).
 
-- [ ] Provide a helper function that can be called later by the wizard.
+- [x] Provide a helper function that can be called later by the wizard.
 
 ### Tests / Acceptance Criteria
 
-- [ ] `tests/test_abi_etherscan.py`:
+- [x] `tests/test_abi_etherscan.py`:
   - Use `unittest.mock` or similar to mock `requests.get`.
   - Test success path (valid ABI JSON string in `result`).
   - Test error path (status `"0"` with error message).
