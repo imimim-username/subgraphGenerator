@@ -49,7 +49,7 @@ def _build_imports_for_events(
     if event_type_imports:
         imports.append({
             "types": event_type_imports,
-            "from": f"../generated/{contract.name}/{contract.name}",
+            "from": f"../../generated/{contract.name}/{contract.name}",
         })
     
     # Import entity types from generated schema
@@ -57,7 +57,7 @@ def _build_imports_for_events(
     if entity_imports:
         imports.append({
             "types": entity_imports,
-            "from": "../generated/schema",
+            "from": "../../generated/schema",
         })
     
     # Import template types for advanced complexity
@@ -66,7 +66,7 @@ def _build_imports_for_events(
         if template_imports:
             imports.append({
                 "types": template_imports,
-                "from": "../generated/templates",
+                "from": "../../generated/templates",
             })
     
     return imports
@@ -88,11 +88,11 @@ def _build_imports_placeholder(
     imports = [
         {
             "types": [f"{contract.name}Event as {contract.name}EventEvent"],
-            "from": f"../generated/{contract.name}/{contract.name}",
+            "from": f"../../generated/{contract.name}/{contract.name}",
         },
         {
             "types": [f"{contract.name}Event"],
-            "from": "../generated/schema",
+            "from": "../../generated/schema",
         },
     ]
     
@@ -102,7 +102,7 @@ def _build_imports_placeholder(
         if template_imports:
             imports.append({
                 "types": template_imports,
-                "from": "../generated/templates",
+                "from": "../../generated/templates",
             })
     
     return imports
@@ -429,14 +429,14 @@ def render_template_mapping_stub(
                 ]
                 imports.append({
                     "types": event_type_imports,
-                    "from": f"../generated/templates/{template.name}/{template.name}",
+                    "from": f"../../generated/templates/{template.name}/{template.name}",
                 })
                 
                 # Import entity types
                 entity_imports = [get_entity_name(event["name"]) for event in filtered_events]
                 imports.append({
                     "types": entity_imports,
-                    "from": "../generated/schema",
+                    "from": "../../generated/schema",
                 })
                 
                 # Build handlers
@@ -530,7 +530,7 @@ def _build_template_placeholders(
     if event_type_imports:
         imports.append({
             "types": event_type_imports,
-            "from": f"../generated/templates/{template.name}/{template.name}",
+            "from": f"../../generated/templates/{template.name}/{template.name}",
         })
     
     # Build entity imports
@@ -538,7 +538,7 @@ def _build_template_placeholders(
     if entity_imports:
         imports.append({
             "types": entity_imports,
-            "from": "../generated/schema",
+            "from": "../../generated/schema",
         })
     
     # Build placeholder handlers
