@@ -2,180 +2,271 @@
 
 ## What this is
 
-**Subgraph Wizard** — a Python CLI tool (v0.1.0) that auto-generates ready-to-deploy
-subgraph projects for [The Graph](https://thegraph.com/) protocol. Users answer
-guided questions or supply a config file; the tool outputs a fully structured
-subgraph project (YAML manifest, GraphQL schema, TypeScript mappings, package.json,
-README) that can be built and deployed with standard Graph tooling.
+**Subgraph Wizard** — a Python tool (v0.1.0) that generates ready-to-deploy
+subgraph projects for [The Graph](https://thegraph.com/) protocol.
 
-Two operating modes:
+**Three entry points:**
 
-**Interactive wizard** — guided Q&A flow:
-```bash
-subgraph-wizard
-```
+| Mode | Command | Description |
+|---|---|---|
+| Visual editor | `subgraph-wizard --ui` | Local web UI; drag-and-drop node canvas |
+| Interactive wizard | `subgraph-wizard` | Text Q&A flow |
+| Config-driven | `subgraph-wizard --config cfg.json --generate` | Non-interactive / CI |
 
-**Config-driven** — load a pre-created config file and generate immediately:
-```bash
-subgraph-wizard --config subgraph-config.json --generate
-```
+The visual editor is the primary recommended path for new users.
 
 ---
 
-## File structure
+## File Structure
 
 ```
 subgraphGenerator/
 ├── src/subgraph_wizard/
-│   ├── main.py                  # CLI entry point, error handling, Ctrl+C
-│   ├── cli.py                   # argparse: --config, --generate, --dry-run, --output-dir
+│   ├── main.py                  # Entry point: routes --ui / interactive / config
+│   ├── cli.py                   # argparse: --ui, --port, --no-browser, --config, --generate, --dry-run
+│   ├── server.py                # FastAPI app + API routes + static file serving
 │   ├── interactive_wizard.py    # Interactive Q&A flow (run_wizard())
-│   ├── networks.py              # SUPPORTED_NETWORKS dict: ethereum/optimism/arbitrum
+│   ├── networks.py              # SUPPORTED_NETWORKS dict
 │   ├── logging_setup.py         # Logging config (LOG_LEVEL env var)
 │   ├── errors.py                # SubgraphWizardError, ValidationError, AbiFetchError
 │   ├── config/
-│   │   ├── model.py             # SubgraphConfig, ContractConfig, TemplateConfig, EntityRelationship dataclasses
-│   │   ├── io.py                # load_config() / save_config() — JSON read/write
-│   │   └── validation.py        # Comprehensive config validation
+│   │   ├── model.py             # SubgraphConfig, ContractConfig, TemplateConfig dataclasses
+│   │   ├── io.py                # load_config() / save_config()
+│   │   └── validation.py        # Config validation rules
 │   ├── abi/
 │   │   ├── local.py             # Load ABI from local JSON file
-│   │   ├── paste.py             # Interactive ABI paste (reads until "END" sentinel)
+│   │   ├── paste.py             # Interactive ABI paste
 │   │   ├── etherscan.py         # Fetch ABI from Etherscan-compatible explorer APIs
-│   │   └── utils.py             # ABI parsing, event extraction, Solidity→GQL type mapping
+│   │   └── utils.py             # ABI parsing, event/read-fn extraction, Solidity→GQL type mapping
 │   ├── generate/
-│   │   ├── orchestrator.py      # Main generation pipeline — coordinates all steps
-│   │   ├── project_layout.py    # Creates abis/, src/mappings/, generated/ directories
-│   │   ├── subgraph_yaml.py     # Generates subgraph.yaml manifest
-│   │   ├── schema.py            # Generates schema.graphql
-│   │   ├── mappings_auto.py     # Generates fully functional TypeScript handlers
-│   │   ├── mappings_stub.py     # Generates stub TypeScript handlers with TODOs
+│   │   ├── orchestrator.py      # CLI generation pipeline
+│   │   ├── graph_compiler.py    # Visual graph → AssemblyScript code
+│   │   ├── validator.py         # Visual graph validation (errors + warnings)
+│   │   ├── networks_json.py     # Write networks.json from visual config
+│   │   ├── subgraph_yaml.py     # Generates subgraph.yaml (CLI and visual modes)
+│   │   ├── schema.py            # Generates schema.graphql (CLI mode)
+│   │   ├── mappings_auto.py     # Generates functional TypeScript handlers (CLI mode)
+│   │   ├── mappings_stub.py     # Generates stub TypeScript handlers (CLI mode)
 │   │   ├── package_json.py      # Generates package.json
-│   │   └── readme.py            # Generates README.md for the output subgraph
+│   │   ├── project_layout.py    # Creates directory structure
+│   │   └── readme.py            # Generates README for output subgraph
+│   ├── static/                  # Pre-built React bundle (committed, served by FastAPI)
 │   └── utils/
-│       ├── fs_utils.py          # Safe file I/O, path helpers
+│       ├── fs_utils.py
 │       ├── templating.py        # Jinja2 wrapper
-│       └── prompts_utils.py     # Reusable prompt/input helpers
-├── templates/                   # Jinja2 template files
+│       └── prompts_utils.py     # Reusable prompt helpers
+├── frontend/                    # React + Vite source (contributors only)
+│   ├── src/
+│   │   ├── App.jsx              # Main canvas; save/load/generate/validation wiring
+│   │   ├── nodes/               # ContractNode, EntityNode, MathNode, TypeCastNode,
+│   │   │                        #   StringConcatNode, ConditionalNode, ContractReadNode
+│   │   ├── hooks/
+│   │   │   └── useValidation.js # Debounced POST /api/validate; returns issue maps
+│   │   └── components/
+│   │       ├── ValidationPanel.jsx   # Collapsible bottom-left issues list
+│   │       ├── NetworksPanel.jsx     # Right-side chain address panel
+│   │       └── Toolbar.jsx           # Left-side node palette
+│   ├── vite.config.js           # Proxy /api → :8000 in dev; build → static/
+│   └── package.json
+├── templates/                   # Jinja2 templates (CLI mode)
 │   ├── subgraph.yaml.j2
 │   ├── README.generated.md.j2
 │   ├── package.json.j2
 │   ├── schema/
-│   │   └── base_schema.graphql.j2
 │   └── mappings/
-│       ├── common_header.ts.j2
-│       ├── mapping_stub.ts.j2
-│       └── mapping_auto.ts.j2
 ├── tests/
-│   ├── fixtures/                # Test configs (basic/advanced) and sample ABIs
+│   ├── fixtures/                # Test configs + sample ABIs
 │   ├── test_cli.py
 │   ├── test_config_io.py
 │   ├── test_validation.py
 │   ├── test_abi_*.py
 │   ├── test_generate_*.py
 │   ├── test_interactive_wizard*.py
-│   └── test_full_generation*.py
-├── examples/
-│   └── basic-single-contract/subgraph-config.json
+│   ├── test_full_generation*.py
+│   ├── test_server.py           # FastAPI endpoint tests (31 tests)
+│   └── test_validator.py        # Visual graph validator tests (60+ tests)
 ├── docs/
+│   ├── visual-editor-architecture.md  # Visual editor design + implementation
 │   ├── architecture.md
 │   ├── config-format.md
 │   ├── user-guide.md
 │   └── development-notes.md
-├── pyproject.toml               # Package metadata, deps, entry point
-├── .env.example
-└── development_checklist.md     # Development roadmap
+├── examples/
+├── pyproject.toml
+└── .env.example
 ```
 
 ---
 
-## Core data models (`config/model.py`)
+## Visual Editor
 
-All are Python dataclasses.
+### Node types
 
-**`SubgraphConfig`** — top-level
-- `name`, `network`, `output_dir`, `mappings_mode` (`"auto"` or `"stub"`)
-- `config_version`: 1=basic, 2=intermediate, 3=advanced
-- `complexity`: `"basic"` | `"intermediate"` | `"advanced"`
+| Type | File | Description |
+|---|---|---|
+| `contract` | `ContractNode.jsx` | ABI upload/fetch, event+read ports, multi-instance |
+| `entity` | `EntityNode.jsx` | Field ports (input), ID strategy |
+| `math` | `MathNode.jsx` | BigInt binary arithmetic |
+| `typecast` | `TypeCastNode.jsx` | Type conversion (7 cast modes, `castIndex` 0–6) |
+| `strconcat` | `StringConcatNode.jsx` | String concatenation with optional separator |
+| `conditional` | `ConditionalNode.jsx` | Boolean guard / early return |
+| `contractread` | `ContractReadNode.jsx` | On-chain view function call |
+
+### Key design decisions
+
+- **No separate Event node.** Event parameters are output ports directly on
+  the Contract node (e.g. `event-Transfer-from`, `event-Transfer-value`).
+- **Networks are a list.** `visual-config.json` stores
+  `networks: list[{network, contracts}]`, not a dict.
+- **Validation runs live.** `useValidation` debounces 600ms and POSTs to
+  `/api/validate` on every canvas change. The **Generate** button is disabled
+  while `hasErrors === true`.
+- **Save/load via API.** `GET /api/config` loads `visual-config.json` on
+  mount; `POST /api/config` saves; `POST /api/generate` writes output files.
+
+### FastAPI endpoints (`server.py`)
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/abi/parse` | Parse raw ABI; returns events + read functions |
+| `POST` | `/api/abi/fetch` | Fetch ABI from Etherscan; returns abi + events + read functions |
+| `GET` | `/api/config` | Load `visual-config.json` (scaffold if missing) |
+| `POST` | `/api/config` | Save `visual-config.json`; returns `{saved, path}` |
+| `POST` | `/api/validate` | Validate graph; returns `{issues, has_errors}` |
+| `POST` | `/api/generate` | Compile + write output files; returns `{files}` |
+
+All endpoints accept `?dir=<path>` to override the working directory.
+
+### Graph validator (`generate/validator.py`)
+
+Error codes (block generation):
+- `CONTRACT_NO_NAME`, `CONTRACT_NO_ABI`
+- `ENTITY_NO_NAME`, `ENTITY_NO_ID_WIRED`
+- `TYPE_MISMATCH`
+- `CONTRACTREAD_NO_CONTRACT`, `CONTRACTREAD_BAD_FN_INDEX`
+
+Warning codes (generation continues):
+- `CONTRACT_EMPTY_INSTANCE`, `DISCONNECTED_CONTRACT`, `DISCONNECTED_ENTITY`
+- `ENTITY_NO_FIELDS`
+- `MATH_DISCONNECTED_INPUT` (math nodes), `STRCONCAT_DISCONNECTED` (strconcat nodes)
+- `CONDITIONAL_NO_CONDITION`
+- `TYPECAST_BAD_INDEX`
+
+### Graph compiler (`generate/graph_compiler.py`)
+
+`compile_graph(visual_config)` → `dict[contract_type, AssemblyScript source]`
+
+Topological traversal: for each event handler, follows edges backward from
+Entity field ports through transform nodes (math/typecast/strconcat/conditional/
+contractread) to event param ports. Emits variable declarations in dependency
+order, then entity load-or-create + field assignments, wrapped in handler
+boilerplate.
+
+### `visual-config.json` format
+
+```json
+{
+  "schema_version": 1,
+  "subgraph_name": "my-subgraph",
+  "networks": [
+    {
+      "network": "mainnet",
+      "contracts": {
+        "ERC20": {
+          "instances": [
+            { "label": "USDC", "address": "0x...", "startBlock": 6082465 }
+          ]
+        }
+      }
+    }
+  ],
+  "nodes": [...],
+  "edges": [...]
+}
+```
+
+### Dev setup
+
+```bash
+# Backend (port 8000)
+pip install -e .
+uvicorn subgraph_wizard.server:app --port 8000 --reload
+
+# Frontend (port 5173, proxies /api → :8000)
+cd frontend && npm install && npm run dev
+```
+
+### Build for distribution
+
+```bash
+cd frontend && npm run build
+# outputs to src/subgraph_wizard/static/ (committed to git)
+```
+
+---
+
+## CLI / Interactive Wizard
+
+### Interactive wizard
+
+```bash
+subgraph-wizard
+```
+
+Prompts for: subgraph name, network, contract(s), ABI source, mapping mode.
+Produces `subgraph-config.json` and optionally generates immediately.
+
+### Config-driven
+
+```json
+{
+  "config_version": 1,
+  "name": "my-token-subgraph",
+  "network": "ethereum",
+  "output_dir": "./generated",
+  "complexity": "basic",
+  "mappings_mode": "auto",
+  "contracts": [
+    {
+      "name": "ERC20",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "start_block": 10000000,
+      "abi_path": "ERC20.json",
+      "index_events": true
+    }
+  ]
+}
+```
+
+```bash
+subgraph-wizard --config subgraph-config.json --generate
+subgraph-wizard --config subgraph-config.json --generate --dry-run
+```
+
+---
+
+## Core Data Models (`config/model.py`)
+
+**`SubgraphConfig`** — used by CLI/interactive modes only (not visual editor)
+- `name`, `network`, `output_dir`, `mappings_mode` (`"auto"` | `"stub"`)
+- `config_version` / `complexity`: `"basic"` | `"intermediate"` | `"advanced"`
 - `contracts: list[ContractConfig]`
-- `templates: list[TemplateConfig]` (advanced only)
-- `entity_relationships: list[EntityRelationship]` (advanced only)
+- `templates: list[TemplateConfig]` (advanced)
+- `entity_relationships: list[EntityRelationship]` (advanced)
 
-**`ContractConfig`** — one contract
-- `name`, `address` (validated `0x[a-fA-F0-9]{40}`), `start_block`
-- `abi_path` (relative to `abis/`)
-- `index_events: bool` (default `True`)
-- `call_handlers: list[str]` (intermediate+, e.g. `["transfer(address,uint256)"]`)
-- `block_handler: bool` (intermediate+)
-
-**`TemplateConfig`** — dynamic data source / factory pattern (advanced)
-- `name`, `abi_path`, `event_handlers: list[str]`
-- `source_contract`, `source_event` (which event triggers template instantiation)
+**`ContractConfig`**
+- `name`, `address`, `start_block`, `abi_path`
 - `index_events`, `call_handlers`, `block_handler`
 
-**`EntityRelationship`** (advanced)
-- `from_entity`, `to_entity`
-- `relation_type`: `"one_to_one"` | `"one_to_many"` | `"many_to_many"`
-- `field_name`, `derived_from` (optional)
+The visual editor does **not** use these dataclasses — it works directly with
+the JSON `visual-config.json` graph.
 
 ---
 
-## Complexity levels
+## Solidity → GraphQL Type Mapping (`abi/utils.py`)
 
-| Level | config_version | Features |
-|---|---|---|
-| basic | 1 | Event indexing only; one entity per contract |
-| intermediate | 2 | Events + call handlers + block handlers |
-| advanced | 3 | Everything + factory templates + entity relationships |
-
----
-
-## Generation pipeline (`generate/orchestrator.py`)
-
-Steps in order:
-1. Create project directory structure (`abis/`, `src/mappings/`, `generated/`)
-2. Load ABIs from paths specified in config
-3. Generate `subgraph.yaml` — data sources, handlers, event signatures
-4. Generate `schema.graphql` — entities with metadata fields (blockNumber, blockTimestamp, transactionHash)
-5. Generate TypeScript mappings — auto (functional) or stub (TODO)
-6. Generate `package.json` — AssemblyScript dependencies
-7. Generate `README.md` — build/deploy instructions
-
-Supports `--dry-run`: logs what would be written without creating files.
-
----
-
-## Mapping modes
-
-**Stub** (`mappings_stub.py`) — handler signatures with TODO comments; user fills in logic. Fast starting point for experienced developers.
-
-**Auto** (`mappings_auto.py`) — fully functional handlers that auto-create entities from event parameters, populate metadata fields, and instantiate templates for factory patterns. Works out of the box.
-
----
-
-## ABI acquisition
-
-Three methods, chosen interactively or via config:
-- **Local file** — load from a JSON file on disk
-- **Paste** — user pastes JSON at the prompt; collected until `"END"` sentinel line
-- **Etherscan** — `GET https://{explorer_host}/api?module=contract&action=getabi&address=...`; API keys from env vars; error messages sanitized to avoid leaking keys
-
----
-
-## Supported networks (`networks.py`)
-
-| Network | Explorer | Chain ID |
-|---|---|---|
-| ethereum | api.etherscan.io | 1 |
-| optimism | api-optimistic.etherscan.io | 10 |
-| arbitrum | api.arbiscan.io | 42161 |
-
-Adding a new network: update `networks.py`, `.env.example`, and `etherscan.py`.
-
----
-
-## Solidity → GraphQL type mapping (`abi/utils.py`)
-
-| Solidity | GraphQL / AssemblyScript |
+| Solidity | Graph type |
 |---|---|
 | `uint8`–`uint32` | `Int` |
 | `uint64`+ | `BigInt` |
@@ -183,77 +274,66 @@ Adding a new network: update `networks.py`, `.env.example`, and `etherscan.py`.
 | `bool` | `Boolean` |
 | `string` | `String` |
 | `bytes`, `bytesN` | `Bytes` |
-| `T[]` | `[T!]` |
+| `int8`–`int32` | `Int` |
+| `int64`+ | `BigInt` |
 
 ---
 
-## Generated output structure
+## Generated Output Structure
 
+**Visual editor mode:**
 ```
-my-token-subgraph/
+<output-dir>/
+├── visual-config.json         ← saved graph state
+├── subgraph.yaml              ← mustache-templated
+├── networks.json              ← per-chain addresses
+└── src/mappings/
+    └── {ContractType}.ts      ← compiled AssemblyScript
+```
+
+**CLI/interactive mode:**
+```
+<output-dir>/
 ├── subgraph.yaml
 ├── schema.graphql
 ├── package.json
 ├── README.md
-├── subgraph-config.json         # Saved config for reproducibility
+├── subgraph-config.json
 ├── abis/
-│   └── ContractName.json
-└── src/
-    └── mappings/
-        └── ContractName.ts
+└── src/mappings/
+    └── {ContractName}.ts
 ```
-
-After generation, user runs: `npm install` → `graph codegen` → `graph build` → deploy.
 
 ---
 
-## Environment variables
+## Environment Variables
 
 | Variable | Purpose |
 |---|---|
-| `ETHERSCAN_API_KEY` | Etherscan API key (ethereum network) |
-| `OPTIMISM_ETHERSCAN_API_KEY` | API key for optimism |
-| `ARBITRUM_ETHERSCAN_API_KEY` | API key for arbitrum |
+| `ETHERSCAN_API_KEY` | Etherscan API key (ethereum) |
+| `OPTIMISM_ETHERSCAN_API_KEY` | Optimism explorer API key |
+| `ARBITRUM_ETHERSCAN_API_KEY` | Arbiscan API key |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default `INFO`) |
-| `DEBUG` | Set to `1` / `true` / `yes` to show full tracebacks |
+| `DEBUG` | `1` / `true` to show full tracebacks |
+| `VITE_API_PORT` | Override FastAPI port during frontend dev (default `8000`) |
 
 ---
 
-## Error handling
+## Dependencies
 
-Custom hierarchy in `errors.py`:
-- `SubgraphWizardError` (base)
-  - `ValidationError` — config/ABI validation failures
-  - `AbiFetchError` — explorer API failures
-
-API keys are never logged; error messages are sanitized. Full tracebacks only with `DEBUG=1`.
-
----
-
-## Validation (`config/validation.py`)
-
-Key checks:
-- `network` must be in `SUPPORTED_NETWORKS`
-- `address` must match `0x[a-fA-F0-9]{40}`
-- Call handler signatures: `functionName(type1,type2,...)`
-- Template `source_contract` must reference an existing contract name
-- Entity relationship `relation_type` must be valid
-- No duplicate contract names or addresses
-- Config version compatible with complexity level
-
----
-
-## Dependencies (`pyproject.toml`)
-
+Runtime (`pyproject.toml`):
 ```
+fastapi>=0.110.0
 jinja2>=3.1.0
 pyyaml>=6.0.0
 requests>=2.28.0
+uvicorn>=0.27.0
 ```
 
-Dev: `pytest`, `ruff`
+Frontend (`frontend/package.json`): React, @xyflow/react, Tailwind CSS v4,
+Vite.
 
-Entry point: `subgraph-wizard = subgraph_wizard.main:run`
+Dev: `pytest`, `ruff`
 
 ---
 
@@ -261,47 +341,35 @@ Entry point: `subgraph-wizard = subgraph_wizard.main:run`
 
 ```bash
 pytest              # all tests
-pytest -v           # verbose
-pytest --cov        # with coverage
+pytest -v
+pytest tests/test_validator.py   # validator only
+pytest tests/test_server.py      # server/API only
 ```
 
-21 test files covering:
-- `test_cli.py` — arg parsing
-- `test_config_io.py` — JSON load/save
-- `test_validation.py` — validation rules
-- `test_abi_*.py` — all three ABI acquisition methods
-- `test_generate_*.py` — individual generator modules
-- `test_interactive_wizard*.py` — wizard flow
-- `test_full_generation*.py` — end-to-end generation (basic, intermediate, advanced)
-
-Fixtures in `tests/fixtures/`: `basic_config.json`, `advanced_config.json`, sample ABIs (Factory, Pair, SampleToken).
+Test files of note:
+- `test_validator.py` — 60+ tests; covers all 7 node types + type mismatch + issue structure
+- `test_server.py` — 31 tests; health, ABI parse/fetch, config CRUD, validate, generate endpoints
 
 ---
 
-## Development notes
-
-- **Branch convention**: `feature/<short-description>`
-- **Code style**: PEP 8, type hints throughout, docstrings on all public functions, ruff formatting
-- **Commit style**: imperative subject line + bulleted body
-- Current milestone: v0.1.0 — manual walkthrough & CI verification complete
-
----
-
-## Git / deployment
+## Git / Deployment
 
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
 - Branch: `main`
-- SSH key for pushing: `REMOVED`
-- Push command: `GIT_SSH_COMMAND="ssh -i REMOVED -o StrictHostKeyChecking=no" git push origin main`
+- SSH key: `REMOVED`
+- Push command:
+  ```bash
+  GIT_SSH_COMMAND="ssh -i REMOVED -o StrictHostKeyChecking=no" git push origin main
+  ```
 
 ---
 
-## Pending / ideas discussed
+## Recent Changes (2026-04-28)
 
-*(nothing currently open)*
-
----
-
-## Recent changes
-
-*(no session changes yet — context file created 2026-04-28)*
+- **M1–M10 complete:** full visual editor implemented and bundled
+- **Validator extended:** added `TYPECAST_BAD_INDEX`, `CONDITIONAL_NO_CONDITION`,
+  `CONTRACTREAD_NO_CONTRACT`, `CONTRACTREAD_BAD_FN_INDEX`, `STRCONCAT_DISCONNECTED`
+  (renamed from `MATH_DISCONNECTED_INPUT` for strconcat nodes)
+- **Tests added:** `test_validator.py` and `test_server.py` covering all new functionality
+- **Docs rewritten:** `docs/visual-editor-architecture.md` updated to match actual implementation;
+  this context file rewritten from scratch to cover both CLI and visual editor modes
