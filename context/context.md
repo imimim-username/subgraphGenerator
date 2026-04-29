@@ -82,6 +82,7 @@ subgraphGenerator/
 │   │   │   └── useValidation.js # Debounced POST /api/validate; returns issue maps
 │   │   └── components/
 │   │       ├── HelpPanel.jsx         # Slide-in help reference
+│   │       ├── GenerateModal.jsx     # Directory-picker modal for the Generate action
 │   │       ├── ValidationPanel.jsx   # Collapsible bottom-left issues list
 │   │       ├── NetworksPanel.jsx     # Right-side chain address panel
 │   │       └── Toolbar.jsx           # Left-side node palette
@@ -266,6 +267,21 @@ Entity fields with an entity-reference type can be marked as `@derivedFrom` by c
 the link icon and entering the referencing field name. These fields are virtual — no input
 port is shown and no AssemblyScript is emitted for them. The Graph resolves them at query time.
 
+### BFS-based node hiding on contract collapse
+
+When a Contract node is collapsed (click its header), the canvas hides **all** downstream nodes
+reachable from that contract via a BFS traversal of the edge graph — not just entity nodes.
+This includes Math, TypeCast, ContractRead, Entity, AggregateEntity, and any other node type
+wired downstream of the collapsed contract.
+
+A node is only hidden if it is **exclusively** reachable via collapsed contracts. If a node is
+also reachable from an expanded contract (shared-node case), it remains visible. The set of
+hidden node IDs is computed in `App.jsx` using `useMemo` every time nodes or edges change.
+
+Expanding a contract restores all hidden nodes and edges automatically.
+
+---
+
 ### Entity field type dropdown stale-closure bug fix
 The field type dropdown in EntityNode previously suffered from a stale closure where the
 handler captured an outdated copy of the fields array, causing earlier fields to be overwritten
@@ -284,7 +300,9 @@ when a later field's type was changed. This was fixed by using a functional stat
 | `GET` | `/api/config` | Load `visual-config.json` (scaffold if missing) |
 | `POST` | `/api/config` | Save `visual-config.json`; returns `{saved, path}` |
 | `POST` | `/api/validate` | Validate graph; returns `{issues, has_errors}` |
-| `POST` | `/api/generate` | Compile + write output files; returns `{files}` |
+| `POST` | `/api/generate` | Compile + write output files; returns `{files, dir}` |
+| `GET`  | `/api/fs/browse` | List subdirectories at `?path=<path>` (defaults to home); returns `{path, parent, dirs}` |
+| `POST` | `/api/fs/mkdir` | Create a directory; body `{path}`; returns `{path}` or 400/422 on error |
 
 All endpoints accept `?dir=<path>` to override the working directory.
 
@@ -356,6 +374,8 @@ All endpoints accept `?dir=<path>` to override the working directory.
 ├── subgraph.yaml
 ├── schema.graphql
 ├── networks.json              ← per-chain addresses
+├── package.json               ← npm scripts: codegen / build / deploy
+├── howto.md                   ← step-by-step deployment guide to The Graph Studio
 └── src/mappings/
     └── {ContractType}.ts      ← compiled AssemblyScript
 ```
@@ -421,6 +441,25 @@ cd frontend && npm run build
 
 ---
 
+### GenerateModal.jsx — directory picker
+
+The **Generate** button no longer immediately generates files. Instead it opens a modal
+(`frontend/src/components/GenerateModal.jsx`) with two modes:
+
+- **Type path** (default): free-form monospace text input. Press `Enter` or click Generate.
+  Press `Escape` or click the backdrop to cancel.
+- **Browse…**: server-backed filesystem navigator powered by `GET /api/fs/browse`.
+  Click folders to descend, use the ↑ chevron to go up, click the folder-plus icon to create
+  a new subdirectory (`POST /api/fs/mkdir`) and navigate into it. The text input goes read-only
+  showing the current browsed path. Click **Type path** to return to manual entry.
+
+The modal stores the last-used directory in `genDir` state in `App.jsx` and passes it as
+`initialDir` on next open. The Generate button is disabled (and styled accordingly) until a
+non-empty directory is selected. All `<button>` elements inside the modal carry `type="button"`
+to prevent accidental form submission if the modal is ever wrapped in a form.
+
+---
+
 ## Recent Changes (2026-04-29)
 
 - **Aggregate Entity redesigned:** trigger events are now configured via a checklist in the
@@ -438,4 +477,13 @@ cd frontend && npm run build
   reverse relations via the link icon; no input port or AssemblyScript is generated for them.
 - **Entity field type dropdown stale-closure bug fixed:** functional state updater pattern
   prevents earlier fields from being overwritten when a later field's type is changed.
+- **Generate button now opens a directory-picker modal** (`GenerateModal.jsx`): two modes —
+  free-form "Type path" input and a server-backed "Browse…" filesystem navigator.
+  New API endpoints: `GET /api/fs/browse` (list dirs) and `POST /api/fs/mkdir` (create dir).
+- **Generated output now includes `package.json`** (npm scripts for codegen/build/deploy) and
+  **`howto.md`** (step-by-step deployment guide to The Graph Studio).
+- **BFS-based node hiding on collapse:** collapsing a Contract node now hides ALL downstream
+  nodes (Math, TypeCast, ContractRead, Entity, AggregateEntity, etc.) reachable only via that
+  contract — not just entity nodes wired via `evt`. Shared nodes (reachable from an expanded
+  contract) remain visible.
 - **Test count: 147 passing.**
