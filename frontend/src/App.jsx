@@ -362,6 +362,41 @@ export default function App() {
     [reactFlowInstance, addNode]
   );
 
+  // ── Build payload for API calls ───────────────────────────────────────────
+  const buildPayload = useCallback(() => ({
+    schema_version: 1,
+    subgraph_name: subgraphName,
+    current_file: currentFile,
+    networks,
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      position: n.position,
+      data: _stripCallbacks(n.data),
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle ?? '',
+      target: e.target,
+      targetHandle: e.targetHandle ?? '',
+    })),
+  }), [subgraphName, currentFile, networks, nodes, edges]);
+
+  // ── Session save (visual-config.json) — for restore on next startup ──────
+  // Called automatically whenever an explicit Save or Save As completes.
+  const saveSession = useCallback(async () => {
+    try {
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload()),
+      });
+    } catch {
+      // Session save failure is non-fatal — explicit file saves are separate
+    }
+  }, [buildPayload]);
+
   // ── File management ───────────────────────────────────────────────────────
 
   // If dirty, stash the action and show the unsaved-changes dialog.
@@ -470,41 +505,6 @@ export default function App() {
     pendingActionRef.current = null;
     setUnsavedOpen(false);
   }, []);
-
-  // ── Build payload for API calls ───────────────────────────────────────────
-  const buildPayload = useCallback(() => ({
-    schema_version: 1,
-    subgraph_name: subgraphName,
-    current_file: currentFile,
-    networks,
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position,
-      data: _stripCallbacks(n.data),
-    })),
-    edges: edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      sourceHandle: e.sourceHandle ?? '',
-      target: e.target,
-      targetHandle: e.targetHandle ?? '',
-    })),
-  }), [subgraphName, currentFile, networks, nodes, edges]);
-
-  // ── Session save (visual-config.json) — for restore on next startup ──────
-  // Called automatically whenever an explicit Save or Save As completes.
-  const saveSession = useCallback(async () => {
-    try {
-      await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
-      });
-    } catch {
-      // Session save failure is non-fatal — explicit file saves are separate
-    }
-  }, [buildPayload]);
 
   // ── Generate output files ─────────────────────────────────────────────────
   const generateFiles = useCallback(async (dir) => {
