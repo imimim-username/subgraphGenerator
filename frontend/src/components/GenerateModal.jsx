@@ -375,8 +375,8 @@ export default function GenerateModal({ initialDir, outputMode, ponderSettings, 
                   cursor: 'pointer',
                 }}
               >
-                <option value="omnichain">omnichain — global ordering across all chains (default)</option>
-                <option value="multichain">multichain — order events per-chain independently</option>
+                <option value="multichain">multichain — order events per-chain independently (default)</option>
+                <option value="omnichain">omnichain — global ordering across all chains</option>
                 <option value="experimental_isolated">experimental_isolated — one DB per chain</option>
               </select>
             </div>

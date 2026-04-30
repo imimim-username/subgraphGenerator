@@ -77,7 +77,7 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     Emits the following options when set by the user:
     - ``database`` — postgres connection block (pglite is the default, omitted)
     - ``ordering`` — omnichain (default, omitted), multichain, experimental_isolated
-    - per-chain ``pollingInterval`` and ``maxBlockRange``
+    - per-chain ``pollingInterval`` and ``ethGetLogsBlockRange``
     - per-contract ``endBlock``, ``includeCallTraces``, ``includeTransactionReceipts``
 
     Args:
@@ -91,7 +91,7 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     ponder_settings: dict[str, Any] = visual_config.get("ponder_settings", {})
 
     db_kind: str = ponder_settings.get("database", "pglite")
-    ordering: str = ponder_settings.get("ordering", "omnichain")
+    ordering: str = ponder_settings.get("ordering", "multichain")
 
     # ── Collect unique network slugs in order of appearance ──────────────────
     seen_slugs: list[str] = []
@@ -189,7 +189,7 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
             f"rpc: process.env.{env_var}",
         ]
         polling_raw = net_entry.get("pollingInterval")
-        max_range_raw = net_entry.get("maxBlockRange")
+        max_range_raw = net_entry.get("ethGetLogsBlockRange")
         if polling_raw not in (None, ""):
             try:
                 fields.append(f"pollingInterval: {int(polling_raw)}")
@@ -197,7 +197,7 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 pass
         if max_range_raw not in (None, ""):
             try:
-                fields.append(f"maxBlockRange: {int(max_range_raw)}")
+                fields.append(f"ethGetLogsBlockRange: {int(max_range_raw)}")
             except (ValueError, TypeError):
                 pass
 
@@ -212,46 +212,101 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
             chain_lines.append(f"    {chain_name}: {{{inner}\n    }},")
 
     # ── Render contracts block ────────────────────────────────────────────────
-    # Group by contract name; emit the first instance per contract (users can
-    # add more manually for factory / multi-address patterns).
+    # Group by contract name, then sub-group by chain to detect multi-chain
+    # deployments. Ponder uses:
+    #   - string   chain: "mainnet"              when deployed on one chain
+    #   - object   chain: { mainnet: {...}, ... } when deployed on multiple chains
     contracts_by_name: dict[str, list[dict[str, Any]]] = {}
     for entry in contract_entries:
         contracts_by_name.setdefault(entry["name"], []).append(entry)
 
     contract_lines: list[str] = []
     for ct_name in sorted(contracts_by_name.keys()):
-        instances = contracts_by_name[ct_name]
+        all_instances = contracts_by_name[ct_name]
         nd = contract_node_data.get(ct_name, {})
         include_call_traces: bool = nd.get("includeCallTraces", False)
         include_tx_receipts: bool = nd.get("includeTransactionReceipts", False)
 
-        inst = instances[0]
-        addr_val = (
-            f'"{inst["address"]}"'
-            if inst["address"]
-            else '"0x0000000000000000000000000000000000000000"'
-        )
+        # Sub-group by chain (preserving original order)
+        instances_by_chain: dict[str, list[dict[str, Any]]] = {}
+        for inst in all_instances:
+            instances_by_chain.setdefault(inst["chain"], []).append(inst)
+        chains_used = list(instances_by_chain.keys())
 
-        fields = [
-            f'chain: "{inst["chain"]}"',
-            f"abi: {ct_name}Abi",
-            f"address: {addr_val}",
-        ]
-        if inst["startBlock"]:
-            fields.append(f"startBlock: {inst['startBlock']}")
-        if inst.get("endBlock"):
-            fields.append(f"endBlock: {inst['endBlock']}")
-        if include_call_traces:
-            fields.append("includeCallTraces: true")
-        if include_tx_receipts:
-            fields.append("includeTransactionReceipts: true")
+        def _addr(inst: dict[str, Any]) -> str:
+            return (
+                f'"{inst["address"]}"'
+                if inst["address"]
+                else '"0x0000000000000000000000000000000000000000"'
+            )
 
-        extra_comment = ""
-        if len(instances) > 1:
-            extra_comment = f"  /* {len(instances) - 1} additional instance(s) — add manually */"
+        if len(chains_used) == 1:
+            # ── Single-chain format ──────────────────────────────────────────
+            chain_name = chains_used[0]
+            chain_instances = instances_by_chain[chain_name]
+            inst = chain_instances[0]
 
-        inner = "".join(f"\n      {f}," for f in fields)
-        contract_lines.append(f"    {ct_name}: {{{extra_comment}{inner}\n    }},")
+            fields = [
+                f'chain: "{chain_name}"',
+                f"abi: {ct_name}Abi",
+                f"address: {_addr(inst)}",
+            ]
+            if inst["startBlock"]:
+                fields.append(f"startBlock: {inst['startBlock']}")
+            if inst.get("endBlock"):
+                fields.append(f"endBlock: {inst['endBlock']}")
+            if include_call_traces:
+                fields.append("includeCallTraces: true")
+            if include_tx_receipts:
+                fields.append("includeTransactionReceipts: true")
+
+            extra_comment = ""
+            if len(chain_instances) > 1:
+                extra_comment = (
+                    f"  /* {len(chain_instances) - 1} additional instance(s) "
+                    f"on {chain_name} — add manually */"
+                )
+
+            inner = "".join(f"\n      {f}," for f in fields)
+            contract_lines.append(f"    {ct_name}: {{{extra_comment}{inner}\n    }},")
+
+        else:
+            # ── Multi-chain format ───────────────────────────────────────────
+            # Top-level fields (shared across all chains)
+            top_fields: list[str] = [f"abi: {ct_name}Abi"]
+            if include_call_traces:
+                top_fields.append("includeCallTraces: true")
+            if include_tx_receipts:
+                top_fields.append("includeTransactionReceipts: true")
+
+            # Per-chain sub-objects
+            chain_obj_lines: list[str] = []
+            extra_instances = 0
+            for chain_name in chains_used:
+                chain_instances = instances_by_chain[chain_name]
+                inst = chain_instances[0]
+                if len(chain_instances) > 1:
+                    extra_instances += len(chain_instances) - 1
+
+                per_chain: list[str] = [f"address: {_addr(inst)}"]
+                if inst["startBlock"]:
+                    per_chain.append(f"startBlock: {inst['startBlock']}")
+                if inst.get("endBlock"):
+                    per_chain.append(f"endBlock: {inst['endBlock']}")
+
+                inner = "".join(f"\n          {f}," for f in per_chain)
+                chain_obj_lines.append(f"        {chain_name}: {{{inner}\n        }},")
+
+            extra_comment = ""
+            if extra_instances:
+                extra_comment = (
+                    f"  /* {extra_instances} additional instance(s) — add manually */"
+                )
+
+            top_str = "".join(f"\n      {f}," for f in top_fields)
+            chain_block = "\n".join(chain_obj_lines)
+            chain_obj = f"\n      chain: {{{extra_comment}\n{chain_block}\n      }},"
+            contract_lines.append(f"    {ct_name}: {{{top_str}{chain_obj}\n    }},")
 
     # ── Assemble file ─────────────────────────────────────────────────────────
     lines: list[str] = ['import { createConfig } from "ponder";']
@@ -266,8 +321,8 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         lines.append("    connectionString: process.env.DATABASE_URL,")
         lines.append("  },")
 
-    # ordering — only emit when non-default
-    if ordering and ordering != "omnichain":
+    # ordering — only emit when non-default (Ponder's default is "multichain")
+    if ordering and ordering != "multichain":
         lines.append(f'  ordering: "{ordering}",')
 
     lines.append("  chains: {")

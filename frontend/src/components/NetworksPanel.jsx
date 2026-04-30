@@ -309,12 +309,12 @@ function NetworkSection({ entry, idx, contractNames, onUpdate, onRemove }) {
                   />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>maxBlockRange</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>ethGetLogsBlockRange</span>
                   <input
                     type="number"
                     className="nodrag"
-                    value={entry.maxBlockRange ?? ''}
-                    onChange={(e) => onUpdate({ ...entry, maxBlockRange: e.target.value !== '' ? Number(e.target.value) : undefined })}
+                    value={entry.ethGetLogsBlockRange ?? ''}
+                    onChange={(e) => onUpdate({ ...entry, ethGetLogsBlockRange: e.target.value !== '' ? Number(e.target.value) : undefined })}
                     placeholder="default"
                     style={{ ...INPUT_STYLE, width: 80 }}
                   />

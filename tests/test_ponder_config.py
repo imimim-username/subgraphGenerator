@@ -25,7 +25,7 @@ def _net(network, contracts=None, pollingInterval=None, maxBlockRange=None):
     if pollingInterval is not None:
         entry["pollingInterval"] = pollingInterval
     if maxBlockRange is not None:
-        entry["maxBlockRange"] = maxBlockRange
+        entry["ethGetLogsBlockRange"] = maxBlockRange  # correct Ponder option name
     return entry
 
 
@@ -209,39 +209,39 @@ class TestPerChainOptions:
         ))
         assert "pollingInterval: 2000" in out
 
-    def test_max_block_range_emitted(self):
+    def test_eth_get_logs_block_range_emitted(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()), maxBlockRange=500)]
         ))
-        assert "maxBlockRange: 500" in out
+        assert "ethGetLogsBlockRange: 500" in out
 
     def test_both_advanced_chain_options(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()), pollingInterval=1000, maxBlockRange=250)]
         ))
         assert "pollingInterval: 1000" in out
-        assert "maxBlockRange: 250" in out
+        assert "ethGetLogsBlockRange: 250" in out
 
     def test_chain_options_omitted_when_absent(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))]
         ))
         assert "pollingInterval" not in out
-        assert "maxBlockRange" not in out
+        assert "ethGetLogsBlockRange" not in out
 
     def test_chain_options_string_values_parsed(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()), pollingInterval="3000", maxBlockRange="1000")]
         ))
         assert "pollingInterval: 3000" in out
-        assert "maxBlockRange: 1000" in out
+        assert "ethGetLogsBlockRange: 1000" in out
 
     def test_invalid_chain_options_omitted(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()), pollingInterval="bad", maxBlockRange="")]
         ))
         assert "pollingInterval" not in out
-        assert "maxBlockRange" not in out
+        assert "ethGetLogsBlockRange" not in out
 
     def test_chain_options_only_on_correct_chain(self):
         """Options set on mainnet should not bleed onto optimism."""
@@ -283,24 +283,27 @@ class TestDatabaseBlock:
 # ── ordering ──────────────────────────────────────────────────────────────────
 
 class TestOrdering:
-    def test_omnichain_ordering_omitted(self):
-        out = render_ponder_config(_cfg(ponder_settings={"ordering": "omnichain"}))
+    def test_multichain_ordering_omitted(self):
+        """multichain is Ponder's default — no need to emit it."""
+        out = render_ponder_config(_cfg(ponder_settings={"ordering": "multichain"}))
         assert "ordering:" not in out
 
     def test_default_ordering_omitted(self):
+        """Empty ponder_settings → multichain is the implicit default."""
         out = render_ponder_config(_cfg(ponder_settings={}))
         assert "ordering:" not in out
 
-    def test_multichain_ordering_emitted(self):
-        out = render_ponder_config(_cfg(ponder_settings={"ordering": "multichain"}))
-        assert 'ordering: "multichain"' in out
+    def test_omnichain_ordering_emitted(self):
+        """omnichain is non-default, so it must be emitted explicitly."""
+        out = render_ponder_config(_cfg(ponder_settings={"ordering": "omnichain"}))
+        assert 'ordering: "omnichain"' in out
 
     def test_experimental_isolated_ordering_emitted(self):
         out = render_ponder_config(_cfg(ponder_settings={"ordering": "experimental_isolated"}))
         assert 'ordering: "experimental_isolated"' in out
 
     def test_ordering_before_chains(self):
-        out = render_ponder_config(_cfg(ponder_settings={"ordering": "multichain"}))
+        out = render_ponder_config(_cfg(ponder_settings={"ordering": "omnichain"}))
         ord_pos = out.index("ordering:")
         chains_pos = out.index("chains:")
         assert ord_pos < chains_pos
@@ -345,10 +348,10 @@ class TestMultiNetworkAndFallback:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst("0xDEAD", 14_000_000, endBlock=15_000_000)), pollingInterval=2000)],
             nodes=[_contract_node("Token", includeCallTraces=True)],
-            ponder_settings={"database": "postgres", "ordering": "multichain"},
+            ponder_settings={"database": "postgres", "ordering": "omnichain"},
         ))
         assert 'kind: "postgres"' in out
-        assert 'ordering: "multichain"' in out
+        assert 'ordering: "omnichain"' in out  # omnichain is non-default, so it's emitted
         assert "pollingInterval: 2000" in out
         assert "startBlock: 14000000" in out
         assert "endBlock: 15000000" in out
@@ -394,16 +397,18 @@ class TestMultiNetworkSameContract:
         assert "Token:" in out
         assert "TokenAbi" in out
 
-    def test_extra_instance_comment_shown(self):
-        """Second instance triggers the 'additional instance(s)' comment."""
+    def test_multi_chain_object_format(self):
+        """Multi-chain deployment uses chain: { mainnet: {...}, optimism: {...} } format."""
         out = render_ponder_config(self._two_network_cfg())
-        assert "additional instance" in out
+        # chain must be an object, not a string
+        assert 'chain: "' not in out.split("Token:")[1]
+        assert "chain: {" in out
 
-    def test_first_instance_address_in_output(self):
-        """The first instance's address should appear."""
+    def test_both_addresses_in_output(self):
+        """Both chain-specific addresses should appear in the multi-chain format."""
         out = render_ponder_config(self._two_network_cfg())
-        # 0xAAAA is the first instance across sorted contract names
         assert "0xAAAA" in out
+        assert "0xBBBB" in out
 
     def test_three_networks_all_chains_emitted(self):
         cfg = _cfg(

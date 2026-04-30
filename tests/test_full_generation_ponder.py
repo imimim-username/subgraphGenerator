@@ -380,27 +380,29 @@ class TestAdvancedPonderSettings:
         ]
         networks = [
             _net_entry("mainnet", "ERC20", "0xAAA", start_block=14_000_000,
-                       end_block=15_000_000, pollingInterval=2000, maxBlockRange=500),
+                       end_block=15_000_000, pollingInterval=2000, ethGetLogsBlockRange=500),
         ]
         return _full_cfg(nodes, [], networks=networks,
-                         ponder_settings={"database": "postgres", "ordering": "multichain"})
+                         ponder_settings={"database": "postgres", "ordering": "omnichain"})
 
     def test_postgres_database_block(self, cfg):
         config = render_ponder_config(cfg)
         assert 'kind: "postgres"' in config
         assert "DATABASE_URL" in config
 
-    def test_multichain_ordering(self, cfg):
+    def test_omnichain_ordering(self, cfg):
+        """omnichain is non-default so it must be explicitly emitted."""
         config = render_ponder_config(cfg)
-        assert 'ordering: "multichain"' in config
+        assert 'ordering: "omnichain"' in config
 
     def test_polling_interval(self, cfg):
         config = render_ponder_config(cfg)
         assert "pollingInterval: 2000" in config
 
-    def test_max_block_range(self, cfg):
+    def test_eth_get_logs_block_range(self, cfg):
+        """Correct Ponder option name is ethGetLogsBlockRange, not maxBlockRange."""
         config = render_ponder_config(cfg)
-        assert "maxBlockRange: 500" in config
+        assert "ethGetLogsBlockRange: 500" in config
 
     def test_end_block(self, cfg):
         config = render_ponder_config(cfg)
@@ -453,10 +455,12 @@ class TestMultiNetworkSameContract:
         assert "Token:" in config
         assert "TokenAbi" in config
 
-    def test_multi_instance_comment_present(self, cfg):
-        """When contract has instances on two networks, the extra-instance comment appears."""
+    def test_multi_chain_object_format(self, cfg):
+        """Contract on two chains uses the object chain: { mainnet: {...}, optimism: {...} } format."""
         config = render_ponder_config(cfg)
-        assert "additional instance" in config
+        assert "chain: {" in config
+        assert "0xAAAA" in config
+        assert "0xBBBB" in config
 
     def test_env_example_has_both_rpc_vars(self, cfg):
         env = render_ponder_env_example(cfg)
