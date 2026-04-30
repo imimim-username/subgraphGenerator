@@ -611,3 +611,63 @@ class TestRenderVisualSubgraphYaml:
         from subgraph_wizard.generate.subgraph_yaml import render_visual_subgraph_yaml
         result = render_visual_subgraph_yaml(self._config())
         assert "{{" not in result, "mustache placeholder leaked into YAML"
+
+
+# ---------------------------------------------------------------------------
+# current_file field — session restore and canvas file management
+# ---------------------------------------------------------------------------
+
+class TestCurrentFileField:
+    """current_file is stored in visual-config.json for session restore,
+    and is an optional field on canvas saves."""
+
+    def test_scaffold_has_null_current_file(self, tmp_path):
+        """A fresh session has no current file."""
+        resp = client.get("/api/config", params={"dir": str(tmp_path)})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "current_file" in data
+        assert data["current_file"] is None
+
+    def test_save_config_with_current_file(self, tmp_path):
+        """Saving a session with current_file round-trips correctly."""
+        payload = {**MINIMAL_CONFIG, "current_file": "my-canvas"}
+        resp = client.post("/api/config", json=payload, params={"dir": str(tmp_path)})
+        assert resp.status_code == 200
+
+    def test_load_config_restores_current_file(self, tmp_path):
+        """After saving with current_file, loading returns the same value."""
+        payload = {**MINIMAL_CONFIG, "current_file": "my-canvas"}
+        client.post("/api/config", json=payload, params={"dir": str(tmp_path)})
+        resp = client.get("/api/config", params={"dir": str(tmp_path)})
+        assert resp.json()["current_file"] == "my-canvas"
+
+    def test_save_config_null_current_file_is_valid(self, tmp_path):
+        """Saving with current_file=null (new / untitled canvas) is valid."""
+        payload = {**MINIMAL_CONFIG, "current_file": None}
+        resp = client.post("/api/config", json=payload, params={"dir": str(tmp_path)})
+        assert resp.status_code == 200
+        resp2 = client.get("/api/config", params={"dir": str(tmp_path)})
+        assert resp2.json()["current_file"] is None
+
+    def test_canvas_save_with_current_file_field(self, tmp_path):
+        """Canvas files may include current_file without server errors."""
+        from subgraph_wizard.server import _get_canvases_dir, _CANVASES_DIR
+        import subgraph_wizard.server as srv
+        orig = srv._CANVASES_DIR
+        srv._CANVASES_DIR = tmp_path / "canvases"
+        try:
+            payload = {**MINIMAL_CONFIG, "current_file": "my-canvas"}
+            resp = client.post("/api/canvases/my-canvas", json=payload)
+            assert resp.status_code == 200
+        finally:
+            srv._CANVASES_DIR = orig
+
+    def test_current_file_omitted_defaults_to_none(self, tmp_path):
+        """If current_file is omitted from the payload, it defaults to None."""
+        # MINIMAL_CONFIG has no current_file key
+        assert "current_file" not in MINIMAL_CONFIG
+        client.post("/api/config", json=MINIMAL_CONFIG, params={"dir": str(tmp_path)})
+        resp = client.get("/api/config", params={"dir": str(tmp_path)})
+        # The saved file should have current_file=null (not missing)
+        assert resp.json().get("current_file") is None

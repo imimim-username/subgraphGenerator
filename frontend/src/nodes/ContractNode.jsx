@@ -15,7 +15,7 @@
  * Click the header to collapse/expand the node body.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react'; // useState used for local transient UI (abiError, pasteMode, pasteText, detecting, detectErr)
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Upload, Clipboard, ChevronDown, ChevronUp, Zap, BookOpen, Search } from 'lucide-react';
 
@@ -72,8 +72,9 @@ function PortRow({ id, label, portType, portClass, indent = false }) {
 }
 
 // ── Event port group: trigger port + expandable per-param ports ───────────────
-function EventPortGroup({ ev }) {
-  const [open, setOpen] = useState(false);
+// `expanded` and `onToggle` are controlled from the parent (stored in node.data
+// so the expand state survives save/load).
+function EventPortGroup({ ev, expanded, onToggle }) {
   const hasParams = ev.params && ev.params.length > 0;
 
   return (
@@ -87,20 +88,20 @@ function EventPortGroup({ ev }) {
         {hasParams && (
           <button
             className="nodrag"
-            onClick={() => setOpen((v) => !v)}
-            title={open ? 'Hide params' : 'Show params'}
+            onClick={onToggle}
+            title={expanded ? 'Hide params' : 'Show params'}
             style={{
               background: 'none',
               border: 'none',
               cursor: 'pointer',
               padding: '0 3px',
-              color: open ? 'var(--port-event)' : 'var(--text-muted)',
+              color: expanded ? 'var(--port-event)' : 'var(--text-muted)',
               display: 'flex',
               alignItems: 'center',
               borderRadius: 3,
             }}
           >
-            {open ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+            {expanded ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
           </button>
         )}
         <Handle
@@ -113,7 +114,7 @@ function EventPortGroup({ ev }) {
       </div>
 
       {/* Per-param ports (shown when expanded) */}
-      {open && ev.params.map((p) => (
+      {expanded && ev.params.map((p) => (
         <PortRow
           key={p.name}
           id={`event-${ev.name}-${p.name}`}
@@ -131,11 +132,11 @@ export default function ContractNode({ id, data, selected }) {
   const {
     name = '', abi, events = [], readFunctions = [], collapsed = false,
     address = '', startBlock = '', network = 'mainnet',
+    // UI state persisted in node.data so it survives save/load
+    showEvents = true, showReads = true, expandedEvents = {},
     onChange, onDelete,
   } = data;
   const fileInputRef = useRef(null);
-  const [showEvents, setShowEvents] = useState(true);
-  const [showReads, setShowReads] = useState(true);
   const [abiError, setAbiError] = useState(null);
   const [pasteMode, setPasteMode] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -144,9 +145,13 @@ export default function ContractNode({ id, data, selected }) {
   const updateNodeInternals = useUpdateNodeInternals();
 
   // Re-register handle positions after ABI load, expand/collapse, or event param expand.
+  // expandedEvents is an object — stringify it to get a stable dependency value.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const expandedEventsKey = JSON.stringify(expandedEvents);
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, events, collapsed, showEvents, showReads, updateNodeInternals]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, events, collapsed, showEvents, showReads, expandedEventsKey, updateNodeInternals]);
 
   // ── Name change ────────────────────────────────────────────────────────────
   const handleNameChange = useCallback(
@@ -433,7 +438,7 @@ export default function ContractNode({ id, data, selected }) {
               <div
                 className="sg-node__section"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                onClick={() => setShowEvents((v) => !v)}
+                onClick={() => onChange({ showEvents: !showEvents })}
               >
                 <span style={{ fontSize: 11, color: 'var(--port-event)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <Zap size={10} /> Events
@@ -442,7 +447,17 @@ export default function ContractNode({ id, data, selected }) {
                 {showEvents ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </div>
               {showEvents && events.map((ev) => (
-                <EventPortGroup key={ev.name} ev={ev} />
+                <EventPortGroup
+                  key={ev.name}
+                  ev={ev}
+                  expanded={expandedEvents[ev.name] ?? false}
+                  onToggle={() => onChange({
+                    expandedEvents: {
+                      ...expandedEvents,
+                      [ev.name]: !(expandedEvents[ev.name] ?? false),
+                    },
+                  })}
+                />
               ))}
             </>
           )}
@@ -454,7 +469,7 @@ export default function ContractNode({ id, data, selected }) {
               <div
                 className="sg-node__section"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                onClick={() => setShowReads((v) => !v)}
+                onClick={() => onChange({ showReads: !showReads })}
               >
                 <span style={{ fontSize: 11, color: 'var(--port-read)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <BookOpen size={10} /> Read Fns

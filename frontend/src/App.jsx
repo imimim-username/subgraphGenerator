@@ -28,7 +28,9 @@ import { ValidationPanel } from './components/ValidationPanel';
 import GenerateModal from './components/GenerateModal';
 import { useValidation } from './hooks/useValidation';
 import { useAutoLayout } from './hooks/useAutoLayout';
-import { BookOpen, FolderOpen, Globe, HelpCircle, Save, Zap } from 'lucide-react';
+import UnsavedChangesDialog from './components/UnsavedChangesDialog';
+import SaveAsDialog from './components/SaveAsDialog';
+import { BookOpen, FilePlus, FolderOpen, Globe, HelpCircle, Save, SaveAll, Zap } from 'lucide-react';
 
 // ── Node type registry ──────────────────────────────────────────────────────
 const NODE_TYPES = {
@@ -79,36 +81,71 @@ function isValidConnection(connection) {
 }
 
 export default function App() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, _onNodesChange] = useNodesState([]);
+  const [edges, setEdges, _onEdgesChange] = useEdgesState([]);
   const reactFlowWrapper = useRef(null);
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const [networksOpen, setNetworksOpen] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [openDialogOpen, setOpenDialogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [networks, setNetworks] = useState([]);
   const [subgraphName, setSubgraphName] = useState('');
-  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
   const [genStatus, setGenStatus] = useState(null);   // null | 'generating' | { files: [...] } | { error: string }
   const [genModalOpen, setGenModalOpen] = useState(false);
   const [genDir, setGenDir] = useState('');           // user-chosen output directory
+
+  // ── File management state ─────────────────────────────────────────────────
+  const [currentFile, setCurrentFile]       = useState(null);   // name of open canvas file (null = untitled)
+  const [isDirty, setIsDirty]               = useState(false);  // unsaved changes?
+  const [saveStatus, setSaveStatus]         = useState(null);   // null | 'saving' | 'saved' | 'error'
+  const [saveAsOpen, setSaveAsOpen]         = useState(false);
+  const [unsavedOpen, setUnsavedOpen]       = useState(false);
+  // Callback to run after the unsaved-changes dialog is resolved (Save or Discard)
+  const pendingActionRef = useRef(null);
+  // When true, the next state-change event should NOT mark dirty (e.g. during load)
+  const suppressDirtyRef = useRef(false);
+
+  // ── Dirty-tracking helpers ────────────────────────────────────────────────
+  const markDirty = useCallback(() => {
+    if (!suppressDirtyRef.current) setIsDirty(true);
+  }, []);
+
+  // Wrap React Flow's change handlers to mark dirty on meaningful changes
+  const onNodesChange = useCallback((changes) => {
+    _onNodesChange(changes);
+    // 'select' and 'dimensions' are internal bookkeeping — not user edits
+    if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) {
+      markDirty();
+    }
+  }, [_onNodesChange, markDirty]);
+
+  const onEdgesChange = useCallback((changes) => {
+    _onEdgesChange(changes);
+    if (changes.some((c) => c.type !== 'select')) markDirty();
+  }, [_onEdgesChange, markDirty]);
 
   // ── Node data updater (passed into each node via data.onChange) ───────────
   const updateNodeData = useCallback((nodeId, patch) => {
     setNodes((nds) =>
       nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
     );
-  }, [setNodes]);
+    markDirty();
+  }, [setNodes, markDirty]);
 
   // ── Node deleter (removes node + all its edges) ──────────────────────────
   const deleteNode = useCallback((nodeId) => {
     setNodes((nds) => nds.filter((n) => n.id !== nodeId));
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
-  }, [setNodes, setEdges]);
+    markDirty();
+  }, [setNodes, setEdges, markDirty]);
 
-  // ── Load a full canvas from a data object (used by CanvasLibraryPanel) ──
-  const loadCanvasData = useCallback((data) => {
+  // ── Load a full canvas from a data object ────────────────────────────────
+  // `name` — the canvas filename (without .json); null for imports / untitled
+  const loadCanvasData = useCallback((data, name = null) => {
+    // Suppress dirty marking while we apply all the state updates
+    suppressDirtyRef.current = true;
+
     const rawNodes = data.nodes ?? [];
     // Pre-resolve contractread nodes whose contractNodeId was saved as '' —
     // this can happen when a node was created but its contract picker was never
@@ -140,13 +177,26 @@ export default function App() {
     );
     setSubgraphName(data.subgraph_name ?? '');
     setNetworks(data.networks ?? []);
+    setCurrentFile(name);
+
+    // Allow React to flush all the state updates, then clear dirty flag
+    setTimeout(() => {
+      suppressDirtyRef.current = false;
+      setIsDirty(false);
+    }, 0);
   }, [updateNodeData, deleteNode, setNodes, setEdges, setSubgraphName, setNetworks]);
 
-  // ── Clear the canvas (new canvas) ────────────────────────────────────────
+  // ── Clear the canvas (new canvas) — assumes dirty check already done ─────
   const newCanvas = useCallback(() => {
+    suppressDirtyRef.current = true;
     setNodes([]);
     setEdges([]);
     setSubgraphName('');
+    setCurrentFile(null);
+    setTimeout(() => {
+      suppressDirtyRef.current = false;
+      setIsDirty(false);
+    }, 0);
   }, [setNodes, setEdges, setSubgraphName]);
 
   // ── Rehydrate a raw node from disk (attach callbacks) ────────────────────
@@ -162,12 +212,15 @@ export default function App() {
     [updateNodeData, deleteNode]
   );
 
-  // ── Load visual-config.json on mount ─────────────────────────────────────
+  // ── Load visual-config.json on mount (session restore) ───────────────────
   useEffect(() => {
     fetch('/api/config')
       .then((r) => r.json())
       .then((config) => {
         if (config.nodes && config.nodes.length > 0) {
+          // Suppress dirty marking during session restore
+          suppressDirtyRef.current = true;
+
           // Pre-resolve empty contractNodeId (same logic as loadCanvasData)
           const firstContractId = config.nodes.find((n) => n.type === 'contract' && n.data?.name)?.id ?? '';
           const rehydrated = config.nodes.map((rawNode) => {
@@ -188,6 +241,13 @@ export default function App() {
           );
           setNetworks(config.networks ?? []);
           setSubgraphName(config.subgraph_name ?? '');
+          // Restore which file was open in the last session
+          if (config.current_file) setCurrentFile(config.current_file);
+
+          setTimeout(() => {
+            suppressDirtyRef.current = false;
+            setIsDirty(false);
+          }, 0);
         }
       })
       .catch((err) => console.warn('[load] failed to load config:', err));
@@ -200,7 +260,7 @@ export default function App() {
       const base = { onChange: (patch) => updateNodeData(id, patch), onDelete: () => deleteNode(id) };
       switch (type) {
         case 'contract':
-          return { ...base, name: '', abi: null, events: [], readFunctions: [], collapsed: false };
+          return { ...base, name: '', abi: null, events: [], readFunctions: [], collapsed: false, showEvents: true, showReads: true, expandedEvents: {} };
         case 'entity':
           return { ...base, name: '', idStrategy: 'custom', fields: [{ name: 'id', type: 'ID', required: true }] };
         case 'aggregateentity':
@@ -233,8 +293,9 @@ export default function App() {
         ...nds,
         { id, type, position, data: defaultData(type, id) },
       ]);
+      markDirty();
     },
-    [reactFlowInstance, setNodes, defaultData]
+    [reactFlowInstance, setNodes, defaultData, markDirty]
   );
 
   const addContractNode        = useCallback(() => addNode('contract'),         [addNode]);
@@ -280,8 +341,9 @@ export default function App() {
         }
       }
       setEdges((eds) => addEdge({ ...params, ...DEFAULT_EDGE_OPTIONS }, eds));
+      markDirty();
     },
-    [setEdges, nodes, updateNodeData]
+    [setEdges, nodes, updateNodeData, markDirty]
   );
 
   // ── Drag-and-drop from toolbar ─────────────────────────────────────────────
@@ -300,10 +362,120 @@ export default function App() {
     [reactFlowInstance, addNode]
   );
 
+  // ── File management ───────────────────────────────────────────────────────
+
+  // If dirty, stash the action and show the unsaved-changes dialog.
+  // Otherwise, run it immediately.
+  const guardDirty = useCallback((action) => {
+    if (isDirty) {
+      pendingActionRef.current = action;
+      setUnsavedOpen(true);
+    } else {
+      action();
+    }
+  }, [isDirty]);
+
+  // Save to a specific named canvas file
+  const saveToFile = useCallback(async (name) => {
+    setSaveStatus('saving');
+    try {
+      const payload = buildPayload();
+      const res = await fetch(`/api/canvases/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, current_file: name }),
+      });
+      if (res.ok) {
+        setCurrentFile(name);
+        setIsDirty(false);
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus(null), 2000);
+        // Also update the session-restore file so the next startup knows which file was open
+        setTimeout(() => saveSession(), 0);
+        return true;
+      } else {
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus(null), 3000);
+        return false;
+      }
+    } catch {
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus(null), 3000);
+      return false;
+    }
+  }, [buildPayload, saveSession]);
+
+  // "Save" — save to current file or trigger Save As
+  const handleSave = useCallback(async () => {
+    if (currentFile) {
+      await saveToFile(currentFile);
+    } else {
+      setSaveAsOpen(true);
+    }
+  }, [currentFile, saveToFile]);
+
+  // "Save As" confirmed with a name
+  const handleSaveAsConfirm = useCallback(async (name) => {
+    setSaveAsOpen(false);
+    const ok = await saveToFile(name);
+    // If there was a pending action (e.g. user picked Save in the unsaved dialog),
+    // execute it now that the save is complete.
+    if (ok && pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      setUnsavedOpen(false);
+      action();
+    }
+  }, [saveToFile]);
+
+  // "New" — guard dirty state first
+  const handleNew = useCallback(() => {
+    guardDirty(() => newCanvas());
+  }, [guardDirty, newCanvas]);
+
+  // "Open" — guard dirty state first, then show dialog
+  const handleOpenDialog = useCallback(() => {
+    guardDirty(() => setOpenDialogOpen(true));
+  }, [guardDirty]);
+
+  // Unsaved dialog: "Save" clicked
+  const handleUnsavedSave = useCallback(() => {
+    if (currentFile) {
+      // Save directly, then run pending action when done
+      saveToFile(currentFile).then((ok) => {
+        if (ok) {
+          const action = pendingActionRef.current;
+          pendingActionRef.current = null;
+          setUnsavedOpen(false);
+          action?.();
+        }
+      });
+    } else {
+      // No current file — open Save As; handleSaveAsConfirm will run pending action
+      setSaveAsOpen(true);
+    }
+  }, [currentFile, saveToFile]);
+
+  // Unsaved dialog: "Don't Save" clicked
+  const handleUnsavedDiscard = useCallback(() => {
+    const action = pendingActionRef.current;
+    pendingActionRef.current = null;
+    setUnsavedOpen(false);
+    setIsDirty(false);
+    action?.();
+  }, []);
+
+  // Unsaved dialog: "Cancel" clicked
+  const handleUnsavedCancel = useCallback(() => {
+    pendingActionRef.current = null;
+    setUnsavedOpen(false);
+  }, []);
+
   // ── Build payload for API calls ───────────────────────────────────────────
   const buildPayload = useCallback(() => ({
     schema_version: 1,
     subgraph_name: subgraphName,
+    current_file: currentFile,
     networks,
     nodes: nodes.map((n) => ({
       id: n.id,
@@ -318,27 +490,19 @@ export default function App() {
       target: e.target,
       targetHandle: e.targetHandle ?? '',
     })),
-  }), [subgraphName, networks, nodes, edges]);
+  }), [subgraphName, currentFile, networks, nodes, edges]);
 
-  // ── Save visual-config.json ───────────────────────────────────────────────
-  const saveConfig = useCallback(async () => {
-    setSaveStatus('saving');
+  // ── Session save (visual-config.json) — for restore on next startup ──────
+  // Called automatically whenever an explicit Save or Save As completes.
+  const saveSession = useCallback(async () => {
     try {
-      const res = await fetch('/api/config', {
+      await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildPayload()),
       });
-      if (res.ok) {
-        setSaveStatus('saved');
-        setTimeout(() => setSaveStatus(null), 2000);
-      } else {
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus(null), 3000);
-      }
     } catch {
-      setSaveStatus('error');
-      setTimeout(() => setSaveStatus(null), 3000);
+      // Session save failure is non-fatal — explicit file saves are separate
     }
   }, [buildPayload]);
 
@@ -521,7 +685,7 @@ export default function App() {
   const saveLabel = saveStatus === 'saving' ? 'Saving…'
     : saveStatus === 'saved' ? '✓ Saved'
     : saveStatus === 'error' ? '✗ Error'
-    : 'Save';
+    : currentFile ? 'Save' : 'Save As';
 
   const genLabel = genStatus === 'generating' ? 'Generating…'
     : genStatus?.files ? `✓ ${genStatus.files.length} files written`
@@ -572,37 +736,61 @@ export default function App() {
           />
         </Panel>
 
-        {/* Center top — subgraph name + save/generate */}
+        {/* Center top — file management + subgraph name + generate */}
         <Panel position="top-center">
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
+            gap: 6,
             padding: '4px 8px',
             background: 'rgba(15,23,42,0.88)',
             border: '1px solid var(--border)',
             borderRadius: 8,
             backdropFilter: 'blur(8px)',
           }}>
+
+            {/* ── File: New / Open ── */}
             <button
-              onClick={() => setLibraryOpen(true)}
-              title="Open Canvas Library"
+              onClick={handleNew}
+              title="New canvas"
               style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 10px',
-                background: libraryOpen ? 'rgba(124,58,237,0.2)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${libraryOpen ? 'var(--accent)' : 'var(--border)'}`,
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 9px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid var(--border)',
                 borderRadius: 5,
-                color: libraryOpen ? 'var(--accent-light)' : 'var(--text-muted)',
+                color: 'var(--text-muted)',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <FilePlus size={11} />
+              New
+            </button>
+
+            <button
+              onClick={handleOpenDialog}
+              title="Open a saved canvas"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 9px',
+                background: openDialogOpen ? 'rgba(124,58,237,0.2)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${openDialogOpen ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 5,
+                color: openDialogOpen ? 'var(--accent-light)' : 'var(--text-muted)',
                 fontSize: 12, fontWeight: 600, cursor: 'pointer',
               }}
             >
               <FolderOpen size={11} />
-              Library
+              Open
             </button>
+
+            {/* ── Divider ── */}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+
+            {/* ── Subgraph name input ── */}
             <input
               value={subgraphName}
-              onChange={(e) => setSubgraphName(e.target.value)}
+              onChange={(e) => { setSubgraphName(e.target.value); markDirty(); }}
               placeholder="subgraph-name"
               style={{
                 background: 'rgba(0,0,0,0.3)',
@@ -613,15 +801,35 @@ export default function App() {
                 fontSize: 13,
                 fontWeight: 500,
                 outline: 'none',
-                width: 180,
+                width: 160,
               }}
             />
+
+            {/* ── Current file + dirty indicator ── */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 11, color: isDirty ? '#f59e0b' : '#475569',
+              minWidth: 80, maxWidth: 130,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              title: currentFile || 'Untitled',
+            }}>
+              {isDirty && <span style={{ color: '#f59e0b', fontSize: 14, lineHeight: 1 }}>●</span>}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {currentFile || 'Untitled'}
+              </span>
+            </div>
+
+            {/* ── Divider ── */}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+
+            {/* ── Save / Save As ── */}
             <button
-              onClick={saveConfig}
+              onClick={handleSave}
               disabled={saveStatus === 'saving'}
+              title={currentFile ? `Save to "${currentFile}"` : 'Save As…'}
               style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 12px',
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px',
                 background: saveStatus === 'saved' ? 'rgba(34,197,94,0.2)' : saveStatus === 'error' ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.06)',
                 border: `1px solid ${saveStatus === 'saved' ? '#22c55e' : saveStatus === 'error' ? '#ef4444' : 'var(--border)'}`,
                 borderRadius: 5,
@@ -632,12 +840,34 @@ export default function App() {
               <Save size={11} />
               {saveLabel}
             </button>
+
+            <button
+              onClick={() => setSaveAsOpen(true)}
+              title="Save a copy with a new name"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid var(--border)',
+                borderRadius: 5,
+                color: 'var(--text-muted)',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <SaveAll size={11} />
+              Save As
+            </button>
+
+            {/* ── Divider ── */}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+
+            {/* ── Simulate / Generate ── */}
             <button
               onClick={() => setSimulateOpen(true)}
               title="Preview subgraph structure"
               style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 12px',
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px',
                 background: 'rgba(255,255,255,0.06)',
                 border: '1px solid var(--border)',
                 borderRadius: 5,
@@ -648,12 +878,13 @@ export default function App() {
               <BookOpen size={11} />
               Simulate
             </button>
+
             <button
               onClick={() => { if (!hasErrors && genStatus !== 'generating') setGenModalOpen(true); }}
               disabled={hasErrors || genStatus === 'generating'}
               title={hasErrors ? 'Fix validation errors before generating' : 'Generate subgraph files'}
               style={{
-                display: 'flex', alignItems: 'center', gap: 5,
+                display: 'flex', alignItems: 'center', gap: 4,
                 padding: '4px 12px',
                 background: genStatus?.files ? 'rgba(124,58,237,0.2)' : genStatus?.error ? 'rgba(239,68,68,0.2)' : hasErrors ? 'rgba(255,255,255,0.02)' : 'rgba(124,58,237,0.12)',
                 border: `1px solid ${genStatus?.files ? 'var(--accent)' : genStatus?.error ? '#ef4444' : hasErrors ? '#334155' : 'var(--accent)'}`,
@@ -730,22 +961,41 @@ export default function App() {
         />
       )}
 
-      {/* Canvas Library modal */}
+      {/* Open dialog */}
       <CanvasLibraryPanel
-        isOpen={libraryOpen}
-        onClose={() => setLibraryOpen(false)}
+        isOpen={openDialogOpen}
+        onClose={() => setOpenDialogOpen(false)}
         onLoad={loadCanvasData}
-        onNew={newCanvas}
         buildPayload={buildPayload}
+        currentFile={currentFile}
         subgraphName={subgraphName}
       />
+
+      {/* Save As dialog */}
+      {saveAsOpen && (
+        <SaveAsDialog
+          initialName={currentFile || subgraphName || ''}
+          onConfirm={handleSaveAsConfirm}
+          onClose={() => setSaveAsOpen(false)}
+        />
+      )}
+
+      {/* Unsaved changes dialog */}
+      {unsavedOpen && (
+        <UnsavedChangesDialog
+          filename={currentFile}
+          onSave={handleUnsavedSave}
+          onDiscard={handleUnsavedDiscard}
+          onCancel={handleUnsavedCancel}
+        />
+      )}
 
       {/* Networks sidebar — outside ReactFlow so it overlays correctly */}
       <NetworksPanel
         isOpen={networksOpen}
         onClose={() => setNetworksOpen(false)}
         networks={networks}
-        onChange={setNetworks}
+        onChange={(nets) => { setNetworks(nets); markDirty(); }}
         contractNames={contractNames}
       />
 

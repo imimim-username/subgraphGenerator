@@ -81,6 +81,7 @@ class VisualConfig(BaseModel):
     """Full visual-config.json payload."""
     schema_version: int = 1
     subgraph_name: str = ""
+    current_file: str | None = None   # name of the last-active canvas file (for session restore)
     networks: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -192,6 +193,7 @@ async def config_load(dir: str | None = Query(default=None)) -> JSONResponse:
             {
                 "schema_version": 1,
                 "subgraph_name": "",
+                "current_file": None,
                 "networks": [],
                 "nodes": [],
                 "edges": [],
