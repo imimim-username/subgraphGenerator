@@ -288,6 +288,31 @@ handler captured an outdated copy of the fields array, causing earlier fields to
 when a later field's type was changed. This was fixed by using a functional state updater
 (`setFields(prev => ...)`) so each update always operates on the latest state.
 
+### Auto-fill strict type checking (`graph_compiler.py`)
+When an entity field has no explicit wire, the compiler auto-fills it from the event parameter
+with the same name. Previously, type mismatches were silently skipped (producing null fields in
+the deployed subgraph). Now, any type mismatch raises a `ValueError` immediately — the generate
+step fails with a diagnostic message before writing any files.
+
+Compatibility exceptions (handled by `_types_compatible()`):
+- Exact type match → compatible
+- `Address` param → `Bytes` field → compatible (`Address extends Bytes` in AssemblyScript)
+All other cross-type combinations are hard errors.
+
+### Indexed reference-type parameters → `Bytes` (`abi/utils.py`)
+When `extract_events` processes an ABI event parameter that is both `indexed: true` and a
+reference type (array, `bytes`, `string`, `tuple`), it emits `graph_type: "Bytes"` rather than
+expanding the element type. This matches graph-cli's behaviour: indexed reference types are
+keccak256-hashed before being stored in log topics, so only the hash (32 bytes) is available
+at indexing time. The `_is_reference_type()` helper identifies these types.
+
+### Networks panel → compiler address lookup
+The compiler (`graph_compiler.py`) builds `_network_address_by_type` from
+`visual_config["networks"]` at initialisation. When resolving `implicit-instance-address`,
+it falls back to this dict if the Contract node's inline address field is empty. This ensures
+contracts configured via the Networks panel get the correct address without requiring users to
+also fill in the inline field.
+
 ---
 
 ## FastAPI Endpoints (`server.py`)
@@ -327,16 +352,24 @@ All endpoints accept `?dir=<path>` to override the working directory.
 
 ## Solidity → Graph Type Mapping (`abi/utils.py`)
 
-| Solidity | Graph type |
-|---|---|
-| `uint8`–`uint32` | `Int` |
-| `uint64`+ | `BigInt` |
-| `address` | `Address` |
-| `bool` | `Boolean` |
-| `string` | `String` |
-| `bytes`, `bytesN` | `Bytes` |
-| `int8`–`int32` | `Int` |
-| `int64`+ | `BigInt` |
+| Solidity | Graph type | Notes |
+|---|---|---|
+| `uint8`–`uint32` | `Int` | |
+| `uint64`+ | `BigInt` | |
+| `address` | `Address` | |
+| `bool` | `Boolean` | |
+| `string` | `String` | |
+| `bytes`, `bytesN` | `Bytes` | |
+| `int8`–`int32` | `Int` | |
+| `int64`+ | `BigInt` | |
+| `T[]`, `T[N]` (non-indexed) | `[GraphType!]` | Expanded to list notation |
+| `T[]`, `T[N]` (indexed) | `Bytes` | Only the keccak256 hash is stored in the log topic — actual values are not recoverable |
+| `bytes`, `string`, `tuple` (indexed) | `Bytes` | Same reason — reference types are hashed when indexed |
+
+**Indexed reference-type rule:** When a parameter has `"indexed": true` in the ABI AND its
+Solidity type is a reference type (any array, `bytes`, `string`, or `tuple`), the parser
+emits `graph_type: "Bytes"` regardless of the element type. This matches what graph-cli
+generates and prevents TS2322 AssemblyScript build errors.
 
 ---
 
@@ -384,7 +417,7 @@ All endpoints accept `?dir=<path>` to override the working directory.
 
 ## Testing
 
-**147 tests passing** (as of 2026-04-29).
+**776 tests passing** (as of 2026-04-30).
 
 ```bash
 pytest              # all tests
@@ -434,10 +467,8 @@ cd frontend && npm run build
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
 - Branch: `main`
 - SSH key: `REMOVED`
-- Push command:
-  ```bash
-  GIT_SSH_COMMAND="ssh -i REMOVED -o StrictHostKeyChecking=no" git push origin main
-  ```
+- Setup: `cp REMOVED ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519`
+- Push command: `git push` (after SSH key setup above)
 
 ---
 
