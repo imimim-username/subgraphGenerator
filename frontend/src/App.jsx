@@ -233,7 +233,7 @@ export default function App() {
     setSubgraphName(data.subgraph_name ?? '');
     setNetworks(data.networks ?? []);
     setOutputMode(data.output_mode ?? 'graph');
-    setPonderSettings(data.ponder_settings ?? { database: 'pglite', dbUrl: '', ordering: 'omnichain' });
+    setPonderSettings({ database: 'pglite', dbUrl: '', ordering: 'omnichain', ...(data.ponder_settings ?? {}) });
     setCurrentFile(name);
 
     // Allow React to flush all the state updates, then clear dirty flag
@@ -299,7 +299,7 @@ export default function App() {
           setNetworks(config.networks ?? []);
           setSubgraphName(config.subgraph_name ?? '');
           setOutputMode(config.output_mode ?? 'graph');
-          setPonderSettings(config.ponder_settings ?? { database: 'pglite', dbUrl: '', ordering: 'omnichain' });
+          setPonderSettings({ database: 'pglite', dbUrl: '', ordering: 'omnichain', ...(config.ponder_settings ?? {}) });
           // Restore which file was open in the last session
           if (config.current_file) setCurrentFile(config.current_file);
 

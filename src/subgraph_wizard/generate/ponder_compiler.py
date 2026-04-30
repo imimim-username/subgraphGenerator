@@ -276,6 +276,8 @@ class PonderCompiler:
         )
 
         event_params = event.get("params", [])
+        # Make event_name visible to _resolve_value_ts (used for setup-context checks)
+        self._compiling_event_name = event_name
 
         for entity_node in sorted_entities:
             if entity_node.get("type") == "aggregateentity":
@@ -857,7 +859,10 @@ class PonderCompiler:
                 stmts.append(f"  functionName: \"{fn_name}\",")
                 if arg_exprs:
                     stmts.append(f"  args: [{', '.join(arg_exprs)}],")
-                stmts.append(f"  blockNumber: event.block.number,")
+                # setup handlers have no event — omit blockNumber so the read
+                # uses the latest block at indexing time instead of crashing
+                if getattr(self, "_compiling_event_name", "") != "setup":
+                    stmts.append(f"  blockNumber: event.block.number,")
                 stmts.append(f"}});")
                 declared_vars.add(result_var)
 
