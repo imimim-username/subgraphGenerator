@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+// eslint-disable-next-line no-unused-vars
+import { configDefaults } from 'vitest/config'
 
 // Backend API port during development.
 // Run the FastAPI server on this port:
@@ -10,6 +12,10 @@ const API_PORT = parseInt(process.env.VITE_API_PORT ?? '8000', 10)
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.js', 'src/**/*.test.jsx'],
+  },
   server: {
     port: 5173,
     // Proxy /api calls to the FastAPI backend during development.

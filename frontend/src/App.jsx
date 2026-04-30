@@ -27,6 +27,7 @@ import SimulatePanel from './components/SimulatePanel';
 import { ValidationPanel } from './components/ValidationPanel';
 import GenerateModal from './components/GenerateModal';
 import { useValidation } from './hooks/useValidation';
+import { useAutoLayout } from './hooks/useAutoLayout';
 import { BookOpen, FolderOpen, Globe, HelpCircle, Save, Zap } from 'lucide-react';
 
 // ── Node type registry ──────────────────────────────────────────────────────
@@ -371,6 +372,9 @@ export default function App() {
   const { issues, hasErrors, issuesByNodeId, issuesByEdgeId, isValidating } =
     useValidation(nodes, edges);
 
+  // ── Auto-layout ───────────────────────────────────────────────────────────
+  const applyLayout = useAutoLayout(nodes, edges, setNodes, reactFlowInstance);
+
   // BFS from collapsed contracts → hide ALL downstream nodes (not just entities).
   // A node stays visible if it is also reachable from an expanded contract (shared-node case).
   const hiddenNodeIds = useMemo(() => {
@@ -564,6 +568,7 @@ export default function App() {
             onAddStrConcat={addStrConcatNode}
             onAddConditional={addConditionalNode}
             onAddContractRead={addContractReadNode}
+            onAutoLayout={applyLayout}
           />
         </Panel>
 

@@ -3,7 +3,7 @@
  * Nodes can be added via click or by dragging onto the canvas.
  */
 
-import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen } from 'lucide-react';
+import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen, Wand2 } from 'lucide-react';
 
 const BTN_BASE = {
   display: 'flex',
@@ -67,6 +67,7 @@ export default function Toolbar({
   onAddStrConcat,
   onAddConditional,
   onAddContractRead,
+  onAutoLayout,
 }) {
   return (
     <div
@@ -150,6 +151,17 @@ export default function Toolbar({
         color="#c084fc"
         onClick={onAddConditional}
       />
+
+      <SectionLabel>Canvas</SectionLabel>
+
+      <div
+        onClick={onAutoLayout}
+        style={{ ...BTN_BASE, cursor: 'pointer' }}
+        title="Auto-arrange all visible nodes (dagre LR layout)"
+      >
+        <Wand2 size={12} style={{ color: '#94a3b8', flexShrink: 0 }} />
+        Auto Layout
+      </div>
     </div>
   );
 }
