@@ -720,21 +720,42 @@ export default function App() {
     (nodeId) => {
       if (!reactFlowInstance) return;
       const node = nodes.find((n) => n.id === nodeId);
-      if (node) {
-        reactFlowInstance.setCenter(node.position.x + 100, node.position.y + 60, {
-          zoom: 1.2,
-          duration: 400,
-        });
-      }
+      if (!node) return;
+      // Use measured dimensions when available (React Flow sets these after mount)
+      const w = node.measured?.width  ?? node.width  ?? 200;
+      const h = node.measured?.height ?? node.height ?? 120;
+      reactFlowInstance.setCenter(
+        node.position.x + w / 2,
+        node.position.y + h / 2,
+        { zoom: 1.2, duration: 400 },
+      );
     },
     [reactFlowInstance, nodes]
   );
 
   const handleIssueClick = useCallback(
     (issue) => {
-      if (issue.node_id) focusNode(issue.node_id);
+      if (issue.node_id) {
+        focusNode(issue.node_id);
+        return;
+      }
+      if (issue.edge_id && reactFlowInstance) {
+        // Focus the midpoint between the edge's source and target nodes
+        const edge = edges.find((e) => e.id === issue.edge_id);
+        if (!edge) return;
+        const srcNode = nodes.find((n) => n.id === edge.source);
+        const tgtNode = nodes.find((n) => n.id === edge.target);
+        if (!srcNode || !tgtNode) return;
+        const srcW = srcNode.measured?.width  ?? srcNode.width  ?? 200;
+        const srcH = srcNode.measured?.height ?? srcNode.height ?? 120;
+        const tgtW = tgtNode.measured?.width  ?? tgtNode.width  ?? 200;
+        const tgtH = tgtNode.measured?.height ?? tgtNode.height ?? 120;
+        const cx = (srcNode.position.x + srcW / 2 + tgtNode.position.x + tgtW / 2) / 2;
+        const cy = (srcNode.position.y + srcH / 2 + tgtNode.position.y + tgtH / 2) / 2;
+        reactFlowInstance.setCenter(cx, cy, { zoom: 1.1, duration: 400 });
+      }
     },
-    [focusNode]
+    [focusNode, reactFlowInstance, nodes, edges]
   );
 
   // Named contract nodes — used by NetworksPanel to show per-contract tables
