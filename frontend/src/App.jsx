@@ -685,7 +685,7 @@ export default function App() {
   const saveLabel = saveStatus === 'saving' ? 'Saving…'
     : saveStatus === 'saved' ? '✓ Saved'
     : saveStatus === 'error' ? '✗ Error'
-    : currentFile ? 'Save' : 'Save As';
+    : 'Save';
 
   const genLabel = genStatus === 'generating' ? 'Generating…'
     : genStatus?.files ? `✓ ${genStatus.files.length} files written`
@@ -826,7 +826,7 @@ export default function App() {
             <button
               onClick={handleSave}
               disabled={saveStatus === 'saving'}
-              title={currentFile ? `Save to "${currentFile}"` : 'Save As…'}
+              title={currentFile ? `Save to "${currentFile}"` : 'Save (will prompt for a name)'}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 padding: '4px 10px',
