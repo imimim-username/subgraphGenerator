@@ -354,3 +354,67 @@ class TestMultiNetworkAndFallback:
         assert "endBlock: 15000000" in out
         assert "includeCallTraces: true" in out
         assert "createConfig" in out
+
+
+# ── Multi-network, same contract on different chains ──────────────────────────
+
+class TestMultiNetworkSameContract:
+    """A contract deployed on two different networks should appear on both chains
+    and have two separate chain entries. This exercises the instance-grouping
+    logic that handles the same contract type across multiple networks."""
+
+    def _two_network_cfg(self):
+        return _cfg(
+            networks=[
+                _net("mainnet",  {"Token": {"instances": [_inst("0xAAAA", 14_000_000)]}}),
+                _net("optimism", {"Token": {"instances": [_inst("0xBBBB",  1_000_000)]}}),
+            ]
+        )
+
+    def test_both_chains_emitted(self):
+        out = render_ponder_config(self._two_network_cfg())
+        assert "mainnet:" in out
+        assert "optimism:" in out
+
+    def test_mainnet_chain_id(self):
+        out = render_ponder_config(self._two_network_cfg())
+        assert "id: 1," in out
+
+    def test_optimism_chain_id(self):
+        out = render_ponder_config(self._two_network_cfg())
+        assert "id: 10," in out
+
+    def test_both_rpc_env_vars(self):
+        out = render_ponder_config(self._two_network_cfg())
+        assert "PONDER_RPC_URL_1" in out
+        assert "PONDER_RPC_URL_10" in out
+
+    def test_contract_section_exists(self):
+        out = render_ponder_config(self._two_network_cfg())
+        assert "Token:" in out
+        assert "TokenAbi" in out
+
+    def test_extra_instance_comment_shown(self):
+        """Second instance triggers the 'additional instance(s)' comment."""
+        out = render_ponder_config(self._two_network_cfg())
+        assert "additional instance" in out
+
+    def test_first_instance_address_in_output(self):
+        """The first instance's address should appear."""
+        out = render_ponder_config(self._two_network_cfg())
+        # 0xAAAA is the first instance across sorted contract names
+        assert "0xAAAA" in out
+
+    def test_three_networks_all_chains_emitted(self):
+        cfg = _cfg(
+            networks=[
+                _net("mainnet",     {"Token": {"instances": [_inst("0xAAA")]}}),
+                _net("optimism",    {"Token": {"instances": [_inst("0xBBB")]}}),
+                _net("arbitrum-one",{"Token": {"instances": [_inst("0xCCC")]}}),
+            ]
+        )
+        out = render_ponder_config(cfg)
+        assert "mainnet:" in out
+        assert "optimism:" in out
+        assert "arbitrumOne:" in out
+        assert "id: 42161," in out  # arbitrum-one chain ID
