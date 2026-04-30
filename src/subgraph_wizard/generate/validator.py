@@ -38,8 +38,10 @@ Warnings (generation continues but output may be incomplete):
   CONDITIONAL_NO_CONDITION        — Conditional node has no condition wired (guard never fires)
   TYPECAST_BAD_INDEX              — TypeCast castIndex out of valid range (0–6)
   AGGREGATE_NO_FIELDS             — Aggregate entity has no field-in-* wires (only id)
-  AGGREGATE_REQUIRED_FIELD_UNWIRED— A required aggregate field has no field-in-* wire
-  DISCONNECTED_AGGREGATE          — Aggregate entity node has no incoming connections
+  AGGREGATE_REQUIRED_FIELD_UNWIRED     — A required aggregate field has no field-in-* wire
+  DISCONNECTED_AGGREGATE               — Aggregate entity node has no incoming connections
+  CONTRACTREAD_NO_BIND_ADDRESS         — ContractRead contract has no address; will silently call event.address
+  ENTITY_CONDITIONAL_SAVE_RISK         — All required fields are conditional; a null-field .save() may be rejected
 """
 
 from __future__ import annotations
@@ -353,6 +355,47 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                         node_id=nid,
                     )
 
+            # Warn when ALL required non-id fields are wired exclusively from
+            # conditional nodes.  The compiler guards each field assignment with
+            # "if (cond) { ... }" but always emits entity.save().  If all
+            # conditions evaluate to false at runtime, the entity is saved with
+            # null required fields and graph-node rejects the save.
+            required_field_names = {
+                fld.get("name", "")
+                for fld in non_id_fields
+                if fld.get("required", False) and fld.get("name", "")
+            }
+            if required_field_names:
+                # For each required field, check whether every incoming wire for
+                # that field comes from a conditional node source.
+                def _all_wires_conditional(field_handle: str) -> bool:
+                    wires = [
+                        e for e in edges
+                        if e.get("target") == nid and e.get("targetHandle") == field_handle
+                    ]
+                    if not wires:
+                        return False  # no wire → separate REQUIRED_FIELD_UNWIRED handles this
+                    return all(
+                        (nodes_by_id.get(e["source"]) or {}).get("type") == "conditional"
+                        for e in wires
+                    )
+
+                all_required_conditional = all(
+                    _all_wires_conditional(f"field-{fn}")
+                    for fn in required_field_names
+                )
+                if all_required_conditional:
+                    _warn(
+                        "ENTITY_CONDITIONAL_SAVE_RISK",
+                        f"Entity '{data.get('name', nid)}': every required field is wired "
+                        f"through a conditional node. If all conditions evaluate to false at "
+                        f"runtime, the entity will be saved with null required fields and "
+                        f"graph-node will reject the save. Consider wiring the entity's 'evt' "
+                        f"handle directly from the same conditional output to gate the entire "
+                        f"block, or ensure at least one required field has an unconditional wire.",
+                        node_id=nid,
+                    )
+
             # Warn when ALL incoming edges to this entity come from per-param
             # contract ports (event-{Name}-{param}) rather than from event trigger
             # ports (event-{Name}).  The compiler discovers entities via the trigger
@@ -509,6 +552,33 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                         f"(contract has {len(read_fns)} read function(s)).",
                         node_id=nid,
                     )
+
+                # Warn when neither a bind-address wire nor a configured contract
+                # address exists.  The compiler falls back to event.address in this
+                # case, which calls the read function on the event-emitting contract
+                # rather than the intended contract — almost certainly wrong.
+                has_bind_wire = (nid, "bind-address") in wired_targets
+                if not has_bind_wire:
+                    ref_data = ref_node.get("data", {})
+                    # Check new-style per-row addresses
+                    instances = ref_data.get("instances", [])
+                    has_address = any(
+                        inst.get("address", "").strip()
+                        for inst in instances
+                    )
+                    # Also check legacy flat address field
+                    if not has_address:
+                        has_address = bool(ref_data.get("address", "").strip())
+                    if not has_address:
+                        _warn(
+                            "CONTRACTREAD_NO_BIND_ADDRESS",
+                            f"Contract Read node '{nid}' references contract "
+                            f"'{ref_data.get('name', ref_contract_id)}' which has no "
+                            f"configured address and no bind-address wire. The compiler "
+                            f"will fall back to event.address, which may call the wrong "
+                            f"contract. Wire a bind-address or add an address to the contract.",
+                            node_id=nid,
+                        )
 
     # ── Per-edge type checks ───────────────────────────────────────────────────
     for edge in edges:
