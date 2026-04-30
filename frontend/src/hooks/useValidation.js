@@ -1,11 +1,16 @@
 /**
  * useValidation — debounced validation hook for the Subgraph Wizard canvas.
  *
- * Calls POST /api/validate whenever nodes or edges change (debounced 600ms).
- * Returns enriched validation state consumed by ValidationPanel and App.jsx.
+ * Two layers of validation:
+ *   1. Client-side broken-handle check — runs synchronously on every change,
+ *      highlights wires whose source/target handle doesn't exist on the node.
+ *   2. Server-side semantic check — debounced 600ms, calls POST /api/validate.
+ *
+ * Both sets of issues are merged and returned together.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { computeBrokenHandleIssues } from '../utils/getKnownHandles';
 
 const DEBOUNCE_MS = 600;
 
@@ -21,19 +26,32 @@ const DEBOUNCE_MS = 600;
  * }}
  */
 export function useValidation(nodes, edges) {
-  const [issues, setIssues] = useState([]);
-  const [hasErrors, setHasErrors] = useState(false);
-  const [issuesByNodeId, setIssuesByNodeId] = useState(new Map());
-  const [issuesByEdgeId, setIssuesByEdgeId] = useState(new Map());
-  const [isValidating, setIsValidating] = useState(false);
-  const timerRef = useRef(null);
-  const abortRef = useRef(null);
+  const [serverIssues, setServerIssues]     = useState([]);
+  const [hasServerErrors, setHasServerErrors] = useState(false);
+  const [isValidating, setIsValidating]     = useState(false);
+  const timerRef  = useRef(null);
+  const abortRef  = useRef(null);
 
+  // ── 1. Client-side broken-handle check (synchronous, no debounce) ──────────
+  const brokenHandleIssues = useMemo(
+    () => computeBrokenHandleIssues(nodes, edges),
+    // Recompute whenever node fields or edge handles change.
+    // Use a stable key derived from the handles so useMemo memoises correctly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      edges.map((e) => `${e.id}:${e.sourceHandle}:${e.targetHandle}`).join('|'),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      nodes.map((n) => {
+        const fields = n.data?.fields ?? [];
+        return `${n.id}:${n.type}:${fields.map((f) => f.name).join(',')}`;
+      }).join('|'),
+    ]
+  );
+
+  // ── 2. Server-side semantic validation (debounced) ──────────────────────────
   const runValidation = useCallback(async (currentNodes, currentEdges) => {
-    // Cancel any in-flight request
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
+    if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -67,25 +85,8 @@ export function useValidation(nodes, edges) {
 
       if (!res.ok) return;
       const data = await res.json();
-      const newIssues = data.issues ?? [];
-
-      const byNode = new Map();
-      const byEdge = new Map();
-      for (const issue of newIssues) {
-        if (issue.node_id) {
-          if (!byNode.has(issue.node_id)) byNode.set(issue.node_id, []);
-          byNode.get(issue.node_id).push(issue);
-        }
-        if (issue.edge_id) {
-          if (!byEdge.has(issue.edge_id)) byEdge.set(issue.edge_id, []);
-          byEdge.get(issue.edge_id).push(issue);
-        }
-      }
-
-      setIssues(newIssues);
-      setHasErrors(data.has_errors ?? false);
-      setIssuesByNodeId(byNode);
-      setIssuesByEdgeId(byEdge);
+      setServerIssues(data.issues ?? []);
+      setHasServerErrors(data.has_errors ?? false);
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.warn('[useValidation] fetch error:', err);
@@ -100,22 +101,38 @@ export function useValidation(nodes, edges) {
     timerRef.current = setTimeout(() => {
       runValidation(nodes, edges);
     }, DEBOUNCE_MS);
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [nodes, edges, runValidation]);
+
+  // ── Merge both issue sets ───────────────────────────────────────────────────
+  const issues = useMemo(
+    () => [...serverIssues, ...brokenHandleIssues],
+    [serverIssues, brokenHandleIssues]
+  );
+
+  const hasErrors = hasServerErrors; // broken handles are warnings, not errors
+
+  const { issuesByNodeId, issuesByEdgeId } = useMemo(() => {
+    const byNode = new Map();
+    const byEdge = new Map();
+    for (const issue of issues) {
+      if (issue.node_id) {
+        if (!byNode.has(issue.node_id)) byNode.set(issue.node_id, []);
+        byNode.get(issue.node_id).push(issue);
+      }
+      if (issue.edge_id) {
+        if (!byEdge.has(issue.edge_id)) byEdge.set(issue.edge_id, []);
+        byEdge.get(issue.edge_id).push(issue);
+      }
+    }
+    return { issuesByNodeId: byNode, issuesByEdgeId: byEdge };
+  }, [issues]);
 
   return { issues, hasErrors, issuesByNodeId, issuesByEdgeId, isValidating };
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Strip React callback functions and internal `_`-prefixed injected keys
- * (e.g. `_allContracts`, `_allEntityNames`) so JSON.stringify is clean.
- * Mirrors the stripping done in App.jsx before saving canvas state.
- */
 function _stripCallbacks(data) {
   if (!data || typeof data !== 'object') return data;
   const out = {};

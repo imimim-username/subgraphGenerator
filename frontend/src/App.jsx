@@ -125,13 +125,64 @@ export default function App() {
     if (changes.some((c) => c.type !== 'select')) markDirty();
   }, [_onEdgesChange, markDirty]);
 
+  // Stable ref so updateNodeData can read current nodes without being in deps
+  const nodesRef = useRef(nodes);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+
   // ── Node data updater (passed into each node via data.onChange) ───────────
   const updateNodeData = useCallback((nodeId, patch) => {
+    // When fields change, detect renames and update connected edge handles.
+    // We read current node state from the stable ref (avoids adding `nodes` to deps).
+    if (patch.fields) {
+      const oldNode   = nodesRef.current.find((n) => n.id === nodeId);
+      const oldFields = oldNode?.data?.fields ?? [];
+      const newFields = patch.fields;
+      const nodeType  = oldNode?.type;
+      const renames   = []; // [{ old: handle, new: handle }]
+
+      for (let i = 0; i < Math.min(oldFields.length, newFields.length); i++) {
+        const oldF = oldFields[i];
+        const newF = newFields[i];
+        // Match by stable _id when both have one; otherwise by position
+        const sameField = (oldF._id && newF._id) ? oldF._id === newF._id : true;
+        if (!sameField) continue;
+        const oldName = oldF.name;
+        const newName = newF.name;
+        if (!oldName || !newName || oldName === newName) continue;
+
+        if (nodeType === 'entity') {
+          renames.push({ old: `field-${oldName}`, new: `field-${newName}` });
+        } else if (nodeType === 'aggregateentity') {
+          // id field handle is always 'field-id' — doesn't change
+          if (oldName !== 'id') {
+            renames.push({ old: `field-in-${oldName}`,   new: `field-in-${newName}` });
+            renames.push({ old: `field-prev-${oldName}`, new: `field-prev-${newName}` });
+          }
+        }
+      }
+
+      if (renames.length > 0) {
+        const renameMap = Object.fromEntries(renames.map((r) => [r.old, r.new]));
+        setEdges((eds) =>
+          eds.map((e) => {
+            const newSrc = e.source === nodeId ? (renameMap[e.sourceHandle] ?? e.sourceHandle) : e.sourceHandle;
+            const newTgt = e.target === nodeId ? (renameMap[e.targetHandle] ?? e.targetHandle) : e.targetHandle;
+            if (newSrc === e.sourceHandle && newTgt === e.targetHandle) return e;
+            // Rebuild edge id to reflect new handles
+            const newId = e.id
+              .replace(e.sourceHandle, newSrc)
+              .replace(e.targetHandle, newTgt);
+            return { ...e, id: newId, sourceHandle: newSrc, targetHandle: newTgt };
+          })
+        );
+      }
+    }
+
     setNodes((nds) =>
       nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
     );
     markDirty();
-  }, [setNodes, markDirty]);
+  }, [setNodes, setEdges, markDirty]);
 
   // ── Node deleter (removes node + all its edges) ──────────────────────────
   const deleteNode = useCallback((nodeId) => {
@@ -638,9 +689,19 @@ export default function App() {
           return { ...e, hidden: true };
         }
         const eIssues = issuesByEdgeId.get(e.id) ?? [];
-        const hasErr  = eIssues.some((i) => i.level === 'error');
-        const hasWarn = eIssues.some((i) => i.level === 'warning');
+        const hasErr         = eIssues.some((i) => i.level === 'error');
+        const hasWarn        = eIssues.some((i) => i.level === 'warning');
+        const hasBrokenHandle = eIssues.some((i) => i.code === 'BROKEN_HANDLE');
         if (!hasErr && !hasWarn) return { ...e, hidden: false };
+        // Broken-handle wires: dashed orange — visually distinct from type-mismatch (solid amber)
+        if (hasBrokenHandle && !hasErr) {
+          return {
+            ...e,
+            hidden: false,
+            animated: false,
+            style: { stroke: '#f59e0b', strokeWidth: 2, strokeDasharray: '6 3' },
+          };
+        }
         return {
           ...e,
           hidden: false,
