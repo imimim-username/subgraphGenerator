@@ -763,7 +763,7 @@ def _generate_ponder(
 
     # PONDER_HOWTO.md
     (output_dir / "PONDER_HOWTO.md").write_text(
-        render_ponder_howto(subgraph_name, str(output_dir)), encoding="utf-8"
+        render_ponder_howto(subgraph_name, str(output_dir), config_dict), encoding="utf-8"
     )
     written.append(str(output_dir / "PONDER_HOWTO.md"))
 

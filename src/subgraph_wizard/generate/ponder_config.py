@@ -436,22 +436,171 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_ponder_howto(project_name: str, output_dir: str) -> str:
-    """Return a PONDER_HOWTO.md quickstart guide.
+def render_ponder_howto(
+    project_name: str,
+    output_dir: str,
+    visual_config: dict[str, Any] | None = None,
+) -> str:
+    """Return a PONDER_HOWTO.md quickstart guide tailored to the canvas settings.
 
     Args:
         project_name: The subgraph/project name.
         output_dir: The path to the generated project directory.
+        visual_config: Parsed visual-config.json dict used to tailor the guide.
 
     Returns:
         Markdown string.
     """
-    slug = project_name.lower().replace(" ", "-") if project_name else "my-ponder-app"
+    visual_config = visual_config or {}
+    ponder_settings: dict[str, Any] = visual_config.get("ponder_settings", {})
+    networks_config: list[dict[str, Any]] = visual_config.get("networks", [])
+    nodes: list[dict[str, Any]] = visual_config.get("nodes", [])
+
+    db_kind: str = ponder_settings.get("database", "pglite")
+    ordering: str = ponder_settings.get("ordering", "multichain")
+    use_postgres = db_kind == "postgres"
+
+    # Collect unique chain slugs → env var names
+    seen_slugs: list[str] = []
+    seen_set: set[str] = set()
+    for net in networks_config:
+        slug = net.get("network", "").strip()
+        if slug and slug not in seen_set:
+            seen_slugs.append(slug)
+            seen_set.add(slug)
+    if not seen_slugs:
+        seen_slugs = ["mainnet"]
+    rpc_vars = [f"PONDER_RPC_URL_{CHAIN_IDS.get(s, 0)}" for s in seen_slugs]
+
+    # Detect setup handlers
+    has_setup = any(
+        n.get("type") == "contract" and n.get("data", {}).get("hasSetupHandler")
+        for n in nodes
+    )
+
+    # ── Step 2: env file — tailored to database choice ───────────────────────
+    rpc_lines = "\n".join(f"  {v}=<your-rpc-url>   # {s}" for v, s in zip(rpc_vars, seen_slugs))
+    if use_postgres:
+        step2 = f"""\
+## Step 2 — Configure environment variables
+
+Copy `.env.example` to `.env`:
+
+```bash
+cd "{output_dir}"
+cp .env.example .env
+```
+
+Then fill in **all** of the following in `.env`:
+
+```
+# RPC endpoints (one per chain)
+{rpc_lines}
+
+# PostgreSQL connection string (required — you chose postgres as your database)
+DATABASE_URL=postgresql://user:password@localhost:5432/ponder
+```
+
+> **PostgreSQL required.** This project was generated with `database: postgres`.
+> You need a running Postgres instance before starting the indexer.
+> On macOS: `brew install postgresql && brew services start postgresql`
+> On Linux: `sudo apt install postgresql && sudo systemctl start postgresql`
+> Or use a managed service: Supabase, Railway, Neon, etc."""
+    else:
+        step2 = f"""\
+## Step 2 — Configure your RPC URL
+
+Copy `.env.example` to `.env` and fill in your RPC endpoint(s):
+
+```bash
+cd "{output_dir}"
+cp .env.example .env
+```
+
+Edit `.env` and set the following variable(s):
+
+```
+{rpc_lines}
+```
+
+You can get a free endpoint from [Alchemy](https://alchemy.com) or [Infura](https://infura.io).
+
+> **Database:** This project uses PGlite (embedded Postgres — zero configuration,
+> data stored in `.ponder/pglite`).  No database setup required for development.
+> For production, switch to PostgreSQL by adding `database: {{ kind: "postgres" }}`
+> to `ponder.config.ts` and setting `DATABASE_URL` in your environment."""
+
+    # ── Ordering note ────────────────────────────────────────────────────────
+    ordering_note = ""
+    if ordering == "omnichain":
+        ordering_note = """\
+
+> **Ordering note:** This project uses `omnichain` ordering, which guarantees
+> deterministic global event ordering across all chains by block timestamp.
+> Indexing is slower than the default `multichain` mode but ensures strict
+> cross-chain consistency."""
+    elif ordering == "experimental_isolated":
+        ordering_note = """\
+
+> **Ordering note:** This project uses `experimental_isolated` ordering.
+> Each chain gets its own isolated database schema.  You **must** include
+> `chainId` in every table's primary key.  See the Ponder docs for details."""
+
+    # ── Setup handler note ───────────────────────────────────────────────────
+    setup_note = ""
+    if has_setup:
+        setup_note = """\
+
+> **Setup handlers:** One or more contracts have a `:setup` handler that runs
+> once before indexing begins (at `startBlock`).  This is used to seed initial
+> state.  The handler has access to `context.db` but **not** `event` — any
+> generated code using `event.*` inside setup will need manual adjustment."""
+
+    # ── GraphQL example ──────────────────────────────────────────────────────
+    # Use the first entity/aggregate node name for the example query, or fall
+    # back to a generic placeholder.
+    example_table = "myTable"
+    for n in nodes:
+        if n.get("type") in ("entity", "aggregateentity"):
+            nm = n.get("data", {}).get("name", "").strip()
+            if nm:
+                example_table = nm[0].lower() + nm[1:] + "s"
+                break
+
+    # ── Production section — tailored to database ────────────────────────────
+    if use_postgres:
+        prod_section = """\
+## Step 6 — Production deployment
+
+Your project is already configured for PostgreSQL.  Make sure `DATABASE_URL`
+points to your production database, then run:
+
+```bash
+pnpm start
+```
+
+You can deploy to Railway, Render, Fly.io, or any Node.js-capable host.
+Set all environment variables (`PONDER_RPC_URL_*` and `DATABASE_URL`) in the
+hosting platform's secrets/env dashboard."""
+    else:
+        prod_section = """\
+## Step 6 — Production deployment
+
+PGlite is for development only.  Before deploying to production:
+
+1. Add `database: {{ kind: "postgres", connectionString: process.env.DATABASE_URL }}`
+   to `createConfig({{ ... }})` in `ponder.config.ts`.
+2. Set `DATABASE_URL` to your production Postgres connection string.
+3. Run `pnpm start`.
+
+Popular hosting options: Railway, Render, Fly.io (all support Node.js + Postgres)."""
+
     return f"""\
 # How to Run "{project_name}" with Ponder
 
 This guide walks you through installing and running your generated Ponder
 indexer from a clean machine.
+{ordering_note}{setup_note}
 
 ---
 
@@ -474,18 +623,7 @@ pnpm --version   # 8.x.x or later
 
 ---
 
-## Step 2 — Configure your RPC URL
-
-Copy `.env.example` to `.env` and fill in your RPC endpoint:
-
-```bash
-cd "{output_dir}"
-cp .env.example .env
-# Edit .env and replace "YOUR_KEY" with your Alchemy / Infura key
-```
-
-Ponder reads `PONDER_RPC_URL_{{chainId}}` from the environment.  For example,
-`PONDER_RPC_URL_1` is the mainnet RPC and `PONDER_RPC_URL_42161` is Arbitrum One.
+{step2}
 
 ---
 
@@ -520,12 +658,9 @@ Example:
 
 ```graphql
 {{
-  transfers(limit: 10) {{
+  {example_table}(limit: 10) {{
     items {{
       id
-      from
-      to
-      amount
     }}
   }}
 }}
@@ -533,25 +668,16 @@ Example:
 
 ---
 
-## Step 6 — Production deployment
-
-For production, Ponder recommends PostgreSQL.  Set `DATABASE_URL` in your
-environment (uncomment the line in `.env`) and run:
-
-```bash
-pnpm start
-```
-
-Or deploy to Railway, Render, Fly.io, etc. as a standard Node.js app.
+{prod_section}
 
 ---
 
 ## Quick reference
 
-| Command      | Description                                      |
-|--------------|--------------------------------------------------|
-| `pnpm dev`   | Start indexer + GraphQL API with hot-reload      |
-| `pnpm start` | Start indexer in production mode                 |
+| Command        | Description                                    |
+|----------------|------------------------------------------------|
+| `pnpm dev`     | Start indexer + GraphQL API with hot-reload    |
+| `pnpm start`   | Start indexer in production mode               |
 | `pnpm codegen` | Regenerate TypeScript types from schema        |
 
 ---
@@ -559,7 +685,13 @@ Or deploy to Railway, Render, Fly.io, etc. as a standard Node.js app.
 ## Troubleshooting
 
 **`Error: Invalid RPC URL`**
-→ Check that `PONDER_RPC_URL_{{chainId}}` is set in `.env` and is a valid HTTPS URL.
+→ Check that your `PONDER_RPC_URL_*` variable(s) are set in `.env` and are
+  valid HTTPS URLs.  Required variable(s) for this project:
+  {", ".join(f"`{v}`" for v in rpc_vars)}
+
+**`Error: DATABASE_URL is not set`**{' (only relevant if you switch to postgres)' if not use_postgres else ''}
+→ Set `DATABASE_URL` in your `.env` file (or your deployment platform's
+  environment variable dashboard).
 
 **`SyntaxError` in generated handler code**
 → Regenerate from the canvas (some transforms may need manual adjustment for
@@ -572,6 +704,5 @@ Or deploy to Railway, Render, Fly.io, etc. as a standard Node.js app.
 **BigDecimal fields show as text**
 → Ponder has no native arbitrary-precision decimal type.  BigDecimal fields
    are stored as text.  To do arithmetic, parse the value with a library such
-   as `decimal.js`, or migrate the entity field to BigInt (store values in
-   base units like wei).
+   as `decimal.js`, or store values in base units (e.g. wei as BigInt).
 """

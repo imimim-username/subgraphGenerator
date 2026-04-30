@@ -123,7 +123,7 @@ def _generate(cfg) -> dict[str, str]:
     outputs["tsconfig.json"] = render_ponder_tsconfig()
     outputs["package.json"] = render_ponder_package_json(cfg.get("subgraph_name", ""))
     outputs[".env.example"] = render_ponder_env_example(cfg)
-    outputs["PONDER_HOWTO.md"] = render_ponder_howto(cfg.get("subgraph_name", ""), "/out")
+    outputs["PONDER_HOWTO.md"] = render_ponder_howto(cfg.get("subgraph_name", ""), "/out", cfg)
     outputs.update(compile_ponder(cfg))  # adds src/index.ts
     for node in cfg.get("nodes", []):
         if node.get("type") == "contract":
@@ -255,6 +255,19 @@ class TestSimpleERC20Transfer:
 
     def test_howto_md_has_project_name(self, outputs):
         assert "my-erc20" in outputs["PONDER_HOWTO.md"]
+
+    def test_howto_md_has_rpc_var_name(self, outputs):
+        """The specific RPC env var for the configured chain should be called out."""
+        assert "PONDER_RPC_URL_1" in outputs["PONDER_HOWTO.md"]
+
+    def test_howto_md_no_postgres_required_note(self, outputs):
+        """PGlite config should NOT say 'PostgreSQL required'."""
+        assert "PostgreSQL required" not in outputs["PONDER_HOWTO.md"]
+
+    def test_howto_md_pglite_zero_config_note(self, outputs):
+        """PGlite config should mention zero-config embedded database."""
+        howto = outputs["PONDER_HOWTO.md"]
+        assert "PGlite" in howto or "embedded" in howto
 
 
 # ── Test 2: Aggregate entity (running total with math) ───────────────────────
@@ -415,6 +428,21 @@ class TestAdvancedPonderSettings:
     def test_include_tx_receipts(self, cfg):
         config = render_ponder_config(cfg)
         assert "includeTransactionReceipts: true" in config
+
+    def test_howto_postgres_required_note(self, cfg):
+        """Postgres config must prominently note DATABASE_URL is required."""
+        howto = render_ponder_howto(cfg["subgraph_name"], "/out", cfg)
+        assert "PostgreSQL required" in howto or "DATABASE_URL" in howto
+
+    def test_howto_omnichain_ordering_note(self, cfg):
+        """omnichain ordering should produce a callout in the howto."""
+        howto = render_ponder_howto(cfg["subgraph_name"], "/out", cfg)
+        assert "omnichain" in howto
+
+    def test_howto_rpc_var_in_troubleshooting(self, cfg):
+        """The specific RPC env var must appear in the troubleshooting section."""
+        howto = render_ponder_howto(cfg["subgraph_name"], "/out", cfg)
+        assert "PONDER_RPC_URL_1" in howto
 
 
 # ── Test 5: Multi-network, same contract on different chains ──────────────────
