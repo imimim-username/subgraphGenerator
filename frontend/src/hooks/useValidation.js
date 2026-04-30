@@ -83,13 +83,22 @@ export function useValidation(nodes, edges) {
         signal: controller.signal,
       });
 
-      if (!res.ok) return;
+      if (!res.ok) {
+        // Server returned an error status — clear stale issues so the UI
+        // doesn't show outdated warnings that may no longer apply.
+        setServerIssues([]);
+        setHasServerErrors(false);
+        return;
+      }
       const data = await res.json();
       setServerIssues(data.issues ?? []);
       setHasServerErrors(data.has_errors ?? false);
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.warn('[useValidation] fetch error:', err);
+        // Network / parse error — clear stale issues rather than leaving them.
+        setServerIssues([]);
+        setHasServerErrors(false);
       }
     } finally {
       setIsValidating(false);

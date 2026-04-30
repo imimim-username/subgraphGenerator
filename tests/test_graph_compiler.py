@@ -316,7 +316,8 @@ class TestStringConcatNode:
 # ── Conditional node ───────────────────────────────────────────────────────────
 
 class TestConditionalNode:
-    def test_conditional_emits_early_return(self):
+    def test_conditional_guards_only_the_wired_field(self):
+        """Conditional node must emit a per-field if-guard, NOT a bare early return."""
         contract = _contract_node("c1", "Token", events=[TRANSFER_EVENT])
         cond = _conditional_node("cond1")
         entity = _entity_node(
@@ -333,8 +334,54 @@ class TestConditionalNode:
             _edge("e4", "cond1", "value-out", "e1", "field-amount"),
         ]
         result = compile_graph(_make_config([contract, cond, entity], edges))
-        assert "if (!" in result["Token"]
-        assert "return" in result["Token"]
+        src = result["Token"]
+        # Must NOT use a bare early return — that would skip save() for other entities
+        assert "return" not in src, "conditional must not emit a bare early return"
+        # Should instead emit a local bool and a per-field if guard
+        assert "if (" in src
+        assert "amount" in src
+        # entity.save() must always be reachable
+        assert ".save()" in src
+
+    def test_conditional_does_not_skip_second_entity_save(self):
+        """When a conditional guards a field in entity A, entity B must still be saved.
+
+        This is the core bug that was fixed: the old "if (!cond) return" would
+        bail out of the handler entirely when the condition was false, silently
+        dropping all save() calls for entities compiled after entity A.
+        """
+        contract = _contract_node("c1", "Token", events=[TRANSFER_EVENT])
+        cond = _conditional_node("cond1")
+        entity_a = _entity_node(
+            "ea", "EntityA",
+            fields=[
+                {"name": "id",    "type": "ID",    "required": True},
+                {"name": "amount","type": "BigInt", "required": False},
+            ],
+        )
+        entity_b = _entity_node(
+            "eb", "EntityB",
+            fields=[{"name": "id", "type": "ID", "required": True}],
+        )
+        edges = [
+            # Both entities triggered by Transfer
+            _edge("e1", "c1", "event-Transfer", "ea", "field-id"),
+            _edge("e2", "c1", "event-Transfer", "eb", "field-id"),
+            # Conditional gates entity A's amount field
+            _edge("e3", "c1", "event-Transfer-value", "cond1", "condition"),
+            _edge("e4", "c1", "event-Transfer-value", "cond1", "value"),
+            _edge("e5", "cond1", "value-out", "ea", "field-amount"),
+        ]
+        result = compile_graph(_make_config([contract, cond, entity_a, entity_b], edges))
+        src = result["Token"]
+        # No early return — both entities must have their save() calls reachable
+        assert "return" not in src, (
+            "conditional must not emit a bare 'return' that skips entity B's save()"
+        )
+        # Both saves must be present
+        assert src.count(".save()") >= 2, (
+            f"expected save() for both entities, got:\n{src}"
+        )
 
 
 # ── Multiple events ────────────────────────────────────────────────────────────
@@ -1947,3 +1994,192 @@ class TestImplicitInstanceAddressFallback:
         src = compile_graph(cfg)["Vault"]
         assert INLINE_ADDR in src
         assert NETWORKS_ADDR not in src
+
+
+# ── Signature normalisation (indexed keyword stripping) ───────────────────────
+
+class TestSignatureNormalisation:
+    """Ensure event signatures have the 'indexed' keyword stripped correctly
+    without corrupting parameter names that contain the word 'indexed'."""
+
+    INDEXED_EVENT = {
+        "name": "Transfer",
+        "signature": "Transfer(indexed address,indexed address,uint256)",
+        "params": [
+            {"name": "from",  "solidity_type": "address", "graph_type": "Address"},
+            {"name": "to",    "solidity_type": "address", "graph_type": "Address"},
+            {"name": "value", "solidity_type": "uint256",  "graph_type": "BigInt"},
+        ],
+    }
+
+    INDEXED_PARAM_NAME_EVENT = {
+        "name": "IndexedValue",
+        # parameter named "indexedAmount" — the word "indexed" appears as a
+        # prefix inside the param name and must not be mangled.
+        "signature": "IndexedValue(indexed uint256 indexedAmount)",
+        "params": [
+            {"name": "indexedAmount", "solidity_type": "uint256", "graph_type": "BigInt"},
+        ],
+    }
+
+    def _make_cfg(self, event, entity_name="Evt"):
+        contract = _contract_node("c1", "Token", events=[event])
+        entity = _entity_node(
+            "e1",
+            entity_name,
+            fields=[{"name": "id", "type": "ID", "required": True}],
+        )
+        edges = [_edge("e1", "c1", f"event-{event['name']}", "e1", "field-id")]
+        return _make_config([contract, entity], edges)
+
+    def test_indexed_keyword_stripped_from_signature(self):
+        """The compiled handler must not contain 'indexed ' in the event signature."""
+        src = compile_graph(self._make_cfg(self.INDEXED_EVENT))["Token"]
+        # The raw "indexed " keyword should not survive into the output
+        assert "indexed " not in src
+
+    def test_clean_signature_in_compiled_handler(self):
+        """Verify the compiled output uses the cleaned signature string."""
+        from subgraph_wizard.generate.graph_compiler import GraphCompiler
+        compiler = GraphCompiler(self._make_cfg(self.INDEXED_EVENT))
+        outputs = compiler.compile()
+        assert outputs, "expected at least one compiled output"
+        token_out = outputs.get("Token")
+        assert token_out is not None
+        assert token_out.handlers, "expected at least one handler"
+        sig = token_out.handlers[0].event_signature
+        assert "indexed" not in sig, f"signature still contains 'indexed': {sig!r}"
+        # Should look like "Transfer(address,address,uint256)"
+        assert sig == "Transfer(address,address,uint256)"
+
+    def test_param_name_containing_indexed_not_mangled(self):
+        """A param whose *name* begins with 'indexed' must survive intact."""
+        from subgraph_wizard.generate.graph_compiler import GraphCompiler
+        compiler = GraphCompiler(self._make_cfg(self.INDEXED_PARAM_NAME_EVENT, "IV"))
+        outputs = compiler.compile()
+        assert outputs, "expected at least one compiled output"
+        token_out = outputs.get("Token")
+        assert token_out is not None
+        assert token_out.handlers, "expected at least one handler"
+        sig = token_out.handlers[0].event_signature
+        # The "indexed " type qualifier is stripped, but "indexedAmount" in the
+        # *name* position must not be touched.
+        assert "indexedAmount" in sig, (
+            f"param name 'indexedAmount' was mangled in signature: {sig!r}"
+        )
+        assert "indexed " not in sig, (
+            f"'indexed ' keyword still present in signature: {sig!r}"
+        )
+
+
+# ── build_entity_name_map deduplication ───────────────────────────────────────
+
+class TestBuildEntityNameMap:
+    """Tests for build_entity_name_map() — ensures duplicate entity names are
+    disambiguated using their upstream contract name as a prefix."""
+
+    def _make_nodes_edges(self, entities, contracts, wires):
+        """
+        entities: list of (node_id, name)
+        contracts: list of (node_id, name)
+        wires: list of (src_id, tgt_id)  — direct contract→entity edges
+        """
+        nodes = []
+        for nid, name in contracts:
+            nodes.append(_contract_node(nid, name))
+        for nid, name in entities:
+            nodes.append(_entity_node(nid, name))
+
+        edges = [
+            {"id": f"e-{i}", "source": src, "sourceHandle": "event-X",
+             "target": tgt, "targetHandle": "field-id"}
+            for i, (src, tgt) in enumerate(wires)
+        ]
+        return nodes, edges
+
+    def test_unique_names_unchanged(self):
+        from subgraph_wizard.generate.graph_compiler import build_entity_name_map
+        nodes, edges = self._make_nodes_edges(
+            entities=[("e1", "Deposit"), ("e2", "Withdrawal")],
+            contracts=[("c1", "Vault")],
+            wires=[("c1", "e1"), ("c1", "e2")],
+        )
+        result = build_entity_name_map(nodes, edges)
+        assert result["e1"] == "Deposit"
+        assert result["e2"] == "Withdrawal"
+
+    def test_duplicate_names_get_contract_prefix(self):
+        from subgraph_wizard.generate.graph_compiler import build_entity_name_map
+        nodes, edges = self._make_nodes_edges(
+            entities=[("e1", "Deposit"), ("e2", "Deposit")],
+            contracts=[("c1", "alchemistV3"), ("c2", "transmuterV3")],
+            wires=[("c1", "e1"), ("c2", "e2")],
+        )
+        result = build_entity_name_map(nodes, edges)
+        assert result["e1"] == "AlchemistV3Deposit"
+        assert result["e2"] == "TransmuterV3Deposit"
+
+    def test_single_char_contract_name_produces_valid_prefix(self):
+        """A single-character contract name must not crash and must produce a
+        capitalised prefix (e.g. 'A' → 'A', prefix is 'A' not an empty string
+        or an IndexError)."""
+        from subgraph_wizard.generate.graph_compiler import build_entity_name_map
+        nodes, edges = self._make_nodes_edges(
+            entities=[("e1", "Deposit"), ("e2", "Deposit")],
+            contracts=[("c1", "A"), ("c2", "B")],
+            wires=[("c1", "e1"), ("c2", "e2")],
+        )
+        result = build_entity_name_map(nodes, edges)
+        # Should not crash; prefixes are single uppercase letters
+        assert result["e1"] == "ADeposit"
+        assert result["e2"] == "BDeposit"
+
+    def test_no_upstream_contract_uses_id_suffix(self):
+        """When no contract can be found upstream, a node-id suffix is appended."""
+        from subgraph_wizard.generate.graph_compiler import build_entity_name_map
+        nodes = [
+            _entity_node("e1", "Deposit"),
+            _entity_node("e2", "Deposit"),
+        ]
+        edges = []  # no contract wired to either entity
+        result = build_entity_name_map(nodes, edges)
+        # Both must be unique and must contain "Deposit"
+        assert "Deposit" in result["e1"]
+        assert "Deposit" in result["e2"]
+        assert result["e1"] != result["e2"]
+
+
+# ── _event_param_expr ─────────────────────────────────────────────────────────
+
+class TestEventParamExpr:
+    """Tests for the _event_param_expr() helper."""
+
+    def test_implicit_address(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("implicit-address") == "event.address"
+
+    def test_implicit_block_number(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("implicit-block-number") == "event.block.number"
+
+    def test_implicit_block_timestamp(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("implicit-block-timestamp") == "event.block.timestamp"
+
+    def test_implicit_tx_hash(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("implicit-tx-hash") == "event.transaction.hash"
+
+    def test_event_param_three_parts(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("event-Deposit-amount") == "event.params.amount"
+
+    def test_event_param_with_underscore_in_name(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        assert _event_param_expr("event-Transfer-from") == "event.params.from"
+
+    def test_trigger_port_fallback_to_tx_hash(self):
+        from subgraph_wizard.generate.graph_compiler import _event_param_expr
+        # Two-part port: trigger port — no meaningful value, falls back to tx hash
+        result = _event_param_expr("event-Deposit")
+        assert "transaction.hash" in result

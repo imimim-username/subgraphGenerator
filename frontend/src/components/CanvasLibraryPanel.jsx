@@ -36,7 +36,6 @@ export default function CanvasLibraryPanel({
   const [deleteStatus, setDeleteStatus] = useState(null);
   const [loading, setLoading]           = useState(false);
   const [importError, setImportError]   = useState(null);
-  const fileInputRef                    = useState(null);
 
   const refreshList = useCallback(() => {
     setLoading(true);

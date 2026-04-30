@@ -27,6 +27,7 @@ Port ID conventions (must match the React nodes):
 from __future__ import annotations
 
 import logging
+import re
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -338,8 +339,10 @@ class GraphCompiler:
         body = textwrap.indent("\n".join(body_lines), "  ")
 
         sig = event.get("signature", f"{event_name}()")
-        # Normalise: strip "indexed " from signature for the yaml entry
-        sig_clean = sig.replace("indexed ", "")
+        # Normalise: strip "indexed " keyword from signature for the yaml entry.
+        # Use re.sub with a word boundary so parameter names that happen to
+        # contain "indexed" as a substring (e.g. "indexedValue") are untouched.
+        sig_clean = re.sub(r'\bindexed\s+', '', sig)
 
         return CompiledHandler(
             contract_type=contract_type,
@@ -506,7 +509,17 @@ class GraphCompiler:
                     contract_id=contract_id,
                     declared_vars=declared_vars,
                 )
-                lines.append(f"{var}.{field_name} = {value_expr}")
+                src_type = (self._nodes.get(incoming.source) or {}).get("type")
+                if src_type == "conditional":
+                    # Wrap assignment in the per-field guard so that only THIS
+                    # field is skipped when the condition is false — other entity
+                    # blocks and their save() calls are unaffected.
+                    cond_var = _var_name(incoming.source, "cond")
+                    lines.append(f"if ({cond_var}) {{")
+                    lines.append(f"  {var}.{field_name} = {value_expr}")
+                    lines.append("}")
+                else:
+                    lines.append(f"{var}.{field_name} = {value_expr}")
             elif field_name in event_param_names:
                 # Auto-fill: field name matches an event parameter.
                 # Types must match — if they don't we raise immediately rather
@@ -725,7 +738,16 @@ class GraphCompiler:
                 contract_id=contract_id,
                 declared_vars=declared_vars,
             )
-            lines.append(f"{var}.{field_name} = {value_expr}")
+            src_type = (self._nodes.get(incoming.source) or {}).get("type")
+            if src_type == "conditional":
+                # Per-field conditional guard — only this field is skipped when
+                # condition is false; the entity is still created and saved.
+                cond_var = _var_name(incoming.source, "cond")
+                lines.append(f"if ({cond_var}) {{")
+                lines.append(f"  {var}.{field_name} = {value_expr}")
+                lines.append("}")
+            else:
+                lines.append(f"{var}.{field_name} = {value_expr}")
 
         lines.append(f"{var}.save()")
         lines.append("")
@@ -916,7 +938,20 @@ class GraphCompiler:
                     contract_type, contract_id, declared_vars,
                 )
                 stmts += s; imports += i
-                stmts.append(f"if (!{cond_expr}) return")
+
+            # Store the condition in a named local variable.
+            # The field-assignment site (entity / aggregate block) detects that
+            # the source is a conditional node and wraps just that assignment in
+            # "if (cond_var) { ... }" — so that only the specific field is
+            # skipped when the condition is false.
+            #
+            # We deliberately do NOT emit a bare "if (!cond) return" here.
+            # An early return would cause save() calls for *other* entities
+            # compiled later in the same handler to be silently skipped.
+            cond_var = _var_name(source_node_id, "cond")
+            if cond_var not in declared_vars:
+                stmts.append(f"let {cond_var} = {cond_expr}")
+                declared_vars.add(cond_var)
 
             val_expr = "null"
             if value_edge:

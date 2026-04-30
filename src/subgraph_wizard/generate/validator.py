@@ -27,16 +27,19 @@ Errors (block generation):
   AGGREGATE_NO_ID_WIRED     — Aggregate entity node has no value wired to its id field
 
 Warnings (generation continues but output may be incomplete):
-  CONTRACT_EMPTY_INSTANCE    — A contract instance row has no address
-  ENTITY_NO_FIELDS           — Entity has only the id field (and it's not wired)
-  DISCONNECTED_CONTRACT      — Contract node has no events wired to any entity
-  DISCONNECTED_ENTITY        — Entity node has no incoming wired fields at all
-  MATH_DISCONNECTED_INPUT    — Math/concat node has an unwired input
-  STRCONCAT_DISCONNECTED     — String Concat node has an unwired input
-  CONDITIONAL_NO_CONDITION   — Conditional node has no condition wired (guard never fires)
-  TYPECAST_BAD_INDEX         — TypeCast castIndex out of valid range (0–6)
-  AGGREGATE_NO_FIELDS        — Aggregate entity has no field-in-* wires (only id)
-  DISCONNECTED_AGGREGATE     — Aggregate entity node has no incoming connections
+  CONTRACT_EMPTY_INSTANCE         — A contract instance row has no address
+  ENTITY_NO_FIELDS                — Entity has only the id field (and it's not wired)
+  ENTITY_REQUIRED_FIELD_UNWIRED   — A required entity field has no wire and may not auto-fill
+  ENTITY_NO_EVENT_TRIGGER         — Entity has only per-param wires; no event trigger wire found
+  DISCONNECTED_CONTRACT           — Contract node has no events wired to any entity
+  DISCONNECTED_ENTITY             — Entity node has no incoming wired fields at all
+  MATH_DISCONNECTED_INPUT         — Math/concat node has an unwired input
+  STRCONCAT_DISCONNECTED          — String Concat node has an unwired input
+  CONDITIONAL_NO_CONDITION        — Conditional node has no condition wired (guard never fires)
+  TYPECAST_BAD_INDEX              — TypeCast castIndex out of valid range (0–6)
+  AGGREGATE_NO_FIELDS             — Aggregate entity has no field-in-* wires (only id)
+  AGGREGATE_REQUIRED_FIELD_UNWIRED— A required aggregate field has no field-in-* wire
+  DISCONNECTED_AGGREGATE          — Aggregate entity node has no incoming connections
 """
 
 from __future__ import annotations
@@ -207,6 +210,31 @@ def _target_port_type(
     return "any"
 
 
+# ── Event handle classifiers ──────────────────────────────────────────────────
+
+
+def _is_event_trigger_handle(handle: str) -> bool:
+    """Return True for 2-part event handles like ``event-Transfer`` (trigger ports).
+
+    These are the handles that the compiler's BFS uses to discover which entities
+    belong to a handler.  The format is exactly ``event-{EventName}`` with no
+    further dashes (other than the one separator).
+    """
+    parts = handle.split("-")
+    return len(parts) == 2 and parts[0] == "event"
+
+
+def _is_event_param_handle(handle: str) -> bool:
+    """Return True for 3+-part event handles like ``event-Transfer-amount`` (param ports).
+
+    These carry individual event parameter values.  Unlike trigger handles they
+    do NOT cause the compiler to include the target entity in the handler's BFS
+    traversal.
+    """
+    parts = handle.split("-")
+    return len(parts) >= 3 and parts[0] == "event"
+
+
 # ── Main validator ────────────────────────────────────────────────────────────
 
 
@@ -305,6 +333,58 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                     node_id=nid,
                 )
 
+            # Warn for required fields that have no wire.
+            # Required fields with no incoming wire and no name-match auto-fill will
+            # produce a null value at runtime, which graph-node rejects with a
+            # null-constraint error and marks the event as failed.
+            for fld in non_id_fields:
+                fname = fld.get("name", "")
+                if not fname:
+                    continue
+                if not fld.get("required", False):
+                    continue
+                fhandle = f"field-{fname}"
+                if (nid, fhandle) not in wired_targets:
+                    _warn(
+                        "ENTITY_REQUIRED_FIELD_UNWIRED",
+                        f"Entity '{data.get('name', nid)}': required field '{fname}' has no wire. "
+                        f"If no event param named '{fname}' exists, this field will be null at "
+                        f"runtime and graph-node will reject the save.",
+                        node_id=nid,
+                    )
+
+            # Warn when ALL incoming edges to this entity come from per-param
+            # contract ports (event-{Name}-{param}) rather than from event trigger
+            # ports (event-{Name}).  The compiler discovers entities via the trigger
+            # port BFS; per-param-only wires are silently ignored and the entity
+            # will not be included in any handler.
+            # Entities connected through transform nodes (math, typecast, etc.) or
+            # with triggerEvents selections are exempt from this check.
+            entity_incoming = [e for e in edges if e.get("target") == nid]
+            has_trigger_wire = any(
+                _is_event_trigger_handle(e.get("sourceHandle", ""))
+                for e in entity_incoming
+            )
+            has_param_only_wire = any(
+                _is_event_param_handle(e.get("sourceHandle", ""))
+                for e in entity_incoming
+            )
+            has_trigger_events = bool(data.get("triggerEvents"))
+            if (
+                entity_incoming
+                and not has_trigger_wire
+                and has_param_only_wire
+                and not has_trigger_events
+            ):
+                _warn(
+                    "ENTITY_NO_EVENT_TRIGGER",
+                    f"Entity '{data.get('name', nid)}' has wires from per-parameter ports "
+                    f"(e.g. event-Transfer-amount) but no trigger wire from an event port "
+                    f"(e.g. event-Transfer → evt). The entity will not be included in any handler. "
+                    f"Add a wire from the event's trigger port to this entity's 'evt' handle.",
+                    node_id=nid,
+                )
+
             # Disconnected entirely
             if nid not in {e["target"] for e in edges}:
                 _warn(
@@ -370,6 +450,25 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                     f"Aggregate entity '{data.get('name', nid)}' has no field inputs wired (field-in-*).",
                     node_id=nid,
                 )
+
+            # Warn for required fields with no field-in-* wire.
+            # graph-node will reject .save() at runtime if a required field is null.
+            agg_non_id = [f for f in data.get("fields", []) if f.get("name") not in ("id", "")]
+            for fld in agg_non_id:
+                fname = fld.get("name", "")
+                if not fname:
+                    continue
+                if not fld.get("required", False):
+                    continue
+                fhandle = f"field-in-{fname}"
+                if (nid, fhandle) not in wired_targets:
+                    _warn(
+                        "AGGREGATE_REQUIRED_FIELD_UNWIRED",
+                        f"Aggregate entity '{data.get('name', nid)}': required field '{fname}' "
+                        f"has no field-in-{fname} wire. It will be null at runtime and "
+                        f"graph-node will reject the save.",
+                        node_id=nid,
+                    )
 
             # Disconnected entirely — OK if triggerEvents checklist has selections
             has_trigger_events = bool(data.get("triggerEvents"))
