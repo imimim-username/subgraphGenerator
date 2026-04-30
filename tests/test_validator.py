@@ -980,3 +980,122 @@ class TestDerivedFromFieldsValidator:
         issues = validate_graph(_make_config([contract, tvl], edges))
         errors = [i for i in issues if i["level"] == "error"]
         assert errors == [], f"Unexpected errors: {errors}"
+
+
+# ── CONTRACT_START_BLOCK_ZERO ─────────────────────────────────────────────────
+
+class TestStartBlockZero:
+    """CONTRACT_START_BLOCK_ZERO warns when a contract instance has startBlock=0."""
+
+    def _contract(self, instances):
+        return {
+            "id": "c1",
+            "type": "contract",
+            "position": {"x": 0, "y": 0},
+            "data": {
+                "name": "MyContract",
+                "abi": [{"type": "event"}],
+                "events": [],
+                "readFunctions": [],
+                "instances": instances,
+            },
+        }
+
+    def test_no_warning_when_start_block_set(self):
+        node = self._contract([{"label": "main", "address": "0xAAA", "startBlock": 12345}])
+        issues = validate_graph(_make_config([node], []))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACT_START_BLOCK_ZERO" not in codes
+
+    def test_warning_when_start_block_zero(self):
+        node = self._contract([{"label": "main", "address": "0xAAA", "startBlock": 0}])
+        issues = validate_graph(_make_config([node], []))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACT_START_BLOCK_ZERO" in codes
+
+    def test_warning_is_level_warning_not_error(self):
+        node = self._contract([{"label": "main", "address": "0xAAA", "startBlock": 0}])
+        issues = validate_graph(_make_config([node], []))
+        matching = [i for i in issues if i["code"] == "CONTRACT_START_BLOCK_ZERO"]
+        assert matching[0]["level"] == "warning"
+        assert matching[0]["node_id"] == "c1"
+
+    def test_warning_when_start_block_missing(self):
+        node = self._contract([{"label": "main", "address": "0xAAA"}])
+        issues = validate_graph(_make_config([node], []))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACT_START_BLOCK_ZERO" in codes
+
+    def test_only_one_warning_per_contract_node(self):
+        """Even with multiple zero-startBlock instances, only one warning per node."""
+        node = self._contract([
+            {"label": "inst1", "address": "0xAAA", "startBlock": 0},
+            {"label": "inst2", "address": "0xBBB", "startBlock": 0},
+        ])
+        issues = validate_graph(_make_config([node], []))
+        matching = [i for i in issues if i["code"] == "CONTRACT_START_BLOCK_ZERO"]
+        assert len(matching) == 1
+
+
+# ── CONTRACTREAD_NO_BIND_ADDRESS ──────────────────────────────────────────────
+
+class TestContractReadNoBindAddress:
+    """CONTRACTREAD_NO_BIND_ADDRESS warns when the referenced contract has no address."""
+
+    def _contract(self, node_id, name, address="", read_fns=None):
+        return {
+            "id": node_id,
+            "type": "contract",
+            "position": {"x": 0, "y": 0},
+            "data": {
+                "name": name,
+                "abi": [{"type": "event"}],
+                "events": [],
+                "readFunctions": read_fns or [
+                    {"name": "foo", "inputs": [], "outputs": [{"name": "val", "graph_type": "BigInt"}]}
+                ],
+                "instances": [{"label": "main", "address": address, "startBlock": 1}],
+            },
+        }
+
+    def _cr_node(self, node_id, contract_node_id, fn_index=0):
+        return {
+            "id": node_id,
+            "type": "contractread",
+            "position": {"x": 200, "y": 0},
+            "data": {"contractNodeId": contract_node_id, "fnIndex": fn_index},
+        }
+
+    def test_no_warning_when_address_configured(self):
+        contract = self._contract("c1", "Oracle", address="0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
+        cr = self._cr_node("cr1", "c1")
+        issues = validate_graph(_make_config([contract, cr], []))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACTREAD_NO_BIND_ADDRESS" not in codes
+
+    def test_no_warning_when_bind_address_wired(self):
+        contract = self._contract("c1", "Oracle", address="")
+        cr = self._cr_node("cr1", "c1")
+        # Fake a bind-address wire from some source to the contractread node
+        bind_edge = {
+            "id": "e1", "source": "some_node", "sourceHandle": "out",
+            "target": "cr1", "targetHandle": "bind-address",
+        }
+        issues = validate_graph(_make_config([contract, cr], [bind_edge]))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACTREAD_NO_BIND_ADDRESS" not in codes
+
+    def test_warning_when_no_address_and_no_wire(self):
+        contract = self._contract("c1", "Oracle", address="")
+        cr = self._cr_node("cr1", "c1")
+        issues = validate_graph(_make_config([contract, cr], []))
+        codes = {i["code"] for i in issues}
+        assert "CONTRACTREAD_NO_BIND_ADDRESS" in codes
+
+    def test_warning_is_level_warning(self):
+        contract = self._contract("c1", "Oracle", address="")
+        cr = self._cr_node("cr1", "c1")
+        issues = validate_graph(_make_config([contract, cr], []))
+        matching = [i for i in issues if i["code"] == "CONTRACTREAD_NO_BIND_ADDRESS"]
+        assert matching[0]["level"] == "warning"
+        assert matching[0]["node_id"] == "cr1"

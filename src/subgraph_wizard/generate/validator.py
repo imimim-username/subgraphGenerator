@@ -42,6 +42,7 @@ Warnings (generation continues but output may be incomplete):
   DISCONNECTED_AGGREGATE               — Aggregate entity node has no incoming connections
   CONTRACTREAD_NO_BIND_ADDRESS         — ContractRead contract has no address; will silently call event.address
   ENTITY_CONDITIONAL_SAVE_RISK         — All required fields are conditional; a null-field .save() may be rejected
+  CONTRACT_START_BLOCK_ZERO            — A contract instance has startBlock=0; subgraph will index from genesis
 """
 
 from __future__ import annotations
@@ -307,6 +308,31 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                         f"Contract '{data.get('name', nid)}' has no events wired to any entity or aggregate.",
                         node_id=nid,
                     )
+
+            # Warn when any instance has startBlock=0 (or unset).
+            # The generator tries Etherscan auto-detection, but it silently falls
+            # back to 0 if the API key is missing or the request fails.  Indexing
+            # from block 0 is extremely slow and may timeout on hosted services.
+            contract_name = data.get("name", nid)
+            instances = data.get("instances") or [{"label": "", "startBlock": data.get("startBlock", 0)}]
+            for inst in instances:
+                raw_sb = inst.get("startBlock", 0)
+                try:
+                    sb = int(raw_sb or 0)
+                except (ValueError, TypeError):
+                    sb = 0
+                if sb == 0:
+                    label = inst.get("label", "").strip()
+                    inst_desc = f" (instance '{label}')" if label else ""
+                    _warn(
+                        "CONTRACT_START_BLOCK_ZERO",
+                        f"Contract '{contract_name}'{inst_desc} has startBlock=0. "
+                        f"If Etherscan auto-detection is unavailable, the subgraph will "
+                        f"index from genesis, which is extremely slow. Set an explicit "
+                        f"startBlock to the block where the contract was deployed.",
+                        node_id=nid,
+                    )
+                    break  # one warning per contract node is enough
 
         elif ntype == "entity":
             if not data.get("name", "").strip():

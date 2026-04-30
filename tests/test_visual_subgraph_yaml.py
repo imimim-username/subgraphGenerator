@@ -305,3 +305,106 @@ class TestYamlNetworksConfig:
         edges = [_edge("e1", "c1", "event-Deposit", "e1", "field-id")]
         yaml = render_visual_subgraph_yaml(_make_config([contract, entity], edges))
         assert "0xNodeAddr" in yaml
+
+
+# ── Cross-ABI (ContractRead referencing a different contract) ─────────────────
+
+def _contractread_node(node_id, contract_node_id, fn_index=0):
+    return {
+        "id": node_id,
+        "type": "contractread",
+        "position": {"x": 300, "y": 0},
+        "data": {"contractNodeId": contract_node_id, "fnIndex": fn_index},
+    }
+
+
+TRANSFER_EVENT = {
+    "name": "Transfer",
+    "signature": "Transfer(address,address,uint256)",
+    "params": [
+        {"name": "from", "solidity_type": "address", "graph_type": "Address"},
+        {"name": "to",   "solidity_type": "address", "graph_type": "Address"},
+        {"name": "value","solidity_type": "uint256",  "graph_type": "BigInt"},
+    ],
+}
+
+
+class TestCrossAbiReferences:
+    """ContractRead on a different contract must add that ABI to the dataSource."""
+
+    def _two_contract_config(self):
+        """
+        Token contract fires Transfer events.
+        Entity node is wired from event-Transfer.
+        A ContractRead node reads from Oracle contract.
+        ContractRead is downstream of the entity (wired into a field).
+        """
+        token = _contract_node("token1", "Token", events=[TRANSFER_EVENT], start_block=1000)
+        oracle = _contract_node(
+            "oracle1", "Oracle",
+            events=[],
+            start_block=500,
+        )
+        # Add a read function to oracle so the contractread is valid
+        oracle["data"]["readFunctions"] = [
+            {"name": "getPrice", "inputs": [], "outputs": [{"name": "price", "graph_type": "BigInt"}]}
+        ]
+        entity = _entity_node("e1", "Transfer", fields=[
+            {"name": "id",    "type": "ID",     "required": True},
+            {"name": "price", "type": "BigInt",  "required": False},
+        ])
+        cr = _contractread_node("cr1", "oracle1", fn_index=0)
+        edges = [
+            # Trigger wire
+            {"id": "eg1", "source": "token1", "sourceHandle": "event-Transfer",
+             "target": "e1", "targetHandle": "evt"},
+            # ID wire
+            {"id": "eg2", "source": "token1", "sourceHandle": "implicit-tx-hash",
+             "target": "e1", "targetHandle": "field-id"},
+            # ContractRead output → entity field
+            {"id": "eg3", "source": "cr1", "sourceHandle": "out-price",
+             "target": "e1", "targetHandle": "field-price"},
+        ]
+        return _make_config([token, oracle, entity, cr], edges)
+
+    def test_primary_abi_always_present(self):
+        yaml = render_visual_subgraph_yaml(self._two_contract_config())
+        assert "name: Token" in yaml
+        assert "Token.json" in yaml
+
+    def test_referenced_contract_abi_included(self):
+        """Oracle ABI must appear under Token's dataSource abis section."""
+        yaml = render_visual_subgraph_yaml(self._two_contract_config())
+        assert "Oracle.json" in yaml, (
+            "Oracle ABI must be listed under Token's abis: section for graph build to succeed"
+        )
+
+    def test_both_abis_under_token_datasource(self):
+        """Both ABIs appear before the eventHandlers section of Token's dataSource."""
+        yaml = render_visual_subgraph_yaml(self._two_contract_config())
+        abis_pos = yaml.find("abis:")
+        handlers_pos = yaml.find("eventHandlers:")
+        oracle_pos = yaml.find("Oracle.json")
+        # Oracle ABI reference must appear between the abis: key and eventHandlers:
+        assert abis_pos < oracle_pos < handlers_pos, (
+            f"Oracle.json at {oracle_pos} should be between abis: ({abis_pos}) "
+            f"and eventHandlers: ({handlers_pos})"
+        )
+
+    def test_same_contract_read_not_duplicated(self):
+        """If ContractRead references the same contract as the dataSource, no duplicate ABI."""
+        token = _contract_node("t1", "Token", events=[TRANSFER_EVENT], start_block=1000)
+        token["data"]["readFunctions"] = [
+            {"name": "name", "inputs": [], "outputs": [{"name": "val", "graph_type": "String"}]}
+        ]
+        entity = _entity_node("e1", "Transfer")
+        cr = _contractread_node("cr1", "t1", fn_index=0)  # same contract
+        edges = [
+            {"id": "eg1", "source": "t1", "sourceHandle": "event-Transfer",
+             "target": "e1", "targetHandle": "evt"},
+            {"id": "eg2", "source": "t1", "sourceHandle": "implicit-tx-hash",
+             "target": "e1", "targetHandle": "field-id"},
+        ]
+        yaml = render_visual_subgraph_yaml(_make_config([token, entity, cr], edges))
+        # Token.json should appear only once
+        assert yaml.count("Token.json") == 1

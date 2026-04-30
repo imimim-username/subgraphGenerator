@@ -404,6 +404,79 @@ def render_visual_subgraph_yaml(
             if insts:
                 network_instances[ct] = insts
 
+    # ── Cross-ABI dependency detection ────────────────────────────────────────
+    # When a handler for Contract A uses a ContractRead node that binds Contract B,
+    # Contract B's ABI must be listed under Contract A's dataSource `abis:` section.
+    # Without it `graph build` fails with "cannot find ABI <ContractB>".
+    #
+    # Strategy:
+    #  1. For each contract type, identify which entity nodes it "owns" via event
+    #     trigger wires (event-{Name} → entity.evt).
+    #  2. For each owned entity, walk BACKWARDS through the edge graph to find
+    #     all upstream nodes (ContractRead output → [transform…] → entity.field).
+    #  3. Any upstream ContractRead that references a different contract type adds
+    #     that type's ABI to the dataSource's extra abis list.
+
+    nodes_by_id_all: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+
+    # Reverse adjacency: target_node_id → set of source_node_ids
+    _rev: dict[str, set[str]] = {}
+    for e in edges:
+        _rev.setdefault(e.get("target", ""), set()).add(e.get("source", ""))
+
+    def _ancestors(start: str) -> set[str]:
+        """All nodes that have any path *to* start (upstream BFS)."""
+        visited: set[str] = set()
+        queue = [start]
+        while queue:
+            nid = queue.pop()
+            if nid in visited:
+                continue
+            visited.add(nid)
+            queue.extend(_rev.get(nid, set()))
+        return visited
+
+    # Which entity nodes are triggered by each contract type?
+    contract_type_entities: dict[str, set[str]] = {}
+    for e in edges:
+        src_id = e.get("source", "")
+        src_handle = e.get("sourceHandle", "")
+        tgt_id = e.get("target", "")
+        # Only 2-part event handles (event-{Name}) are trigger ports
+        parts = src_handle.split("-")
+        if len(parts) != 2 or parts[0] != "event":
+            continue
+        if src_id not in contract_nodes:
+            continue
+        c_type = contract_nodes[src_id].get("name", "")
+        if c_type:
+            contract_type_entities.setdefault(c_type, set()).add(tgt_id)
+
+    # contract_type → set of extra contract type names whose ABIs are needed
+    _extra_abis_by_type: dict[str, set[str]] = {}
+    for c_id, c_data in contract_nodes.items():
+        c_type = c_data.get("name", "")
+        if not c_type:
+            continue
+        extra: set[str] = set()
+        for entity_id in contract_type_entities.get(c_type, set()):
+            for anc_id in _ancestors(entity_id):
+                anc_node = nodes_by_id_all.get(anc_id)
+                if not anc_node or anc_node.get("type") != "contractread":
+                    continue
+                ref_id = anc_node["data"].get("contractNodeId", "")
+                if not ref_id:
+                    # Same fallback as the compiler: first contract node on canvas
+                    ref_id = next(
+                        (cid for cid, cd in contract_nodes.items() if cd.get("name")),
+                        "",
+                    )
+                if ref_id and ref_id in contract_nodes:
+                    ref_type = contract_nodes[ref_id].get("name", "")
+                    if ref_type and ref_type != c_type:
+                        extra.add(ref_type)
+        _extra_abis_by_type[c_type] = extra
+
     data_sources: list[dict[str, Any]] = []
 
     for contract_id, contract_data in contract_nodes.items():
@@ -481,6 +554,10 @@ def render_visual_subgraph_yaml(
                         inst_address, contract_network, exc,
                     )
 
+            extra_abis = [
+                {"name": ref_type, "abi_path": f"{ref_type}.json"}
+                for ref_type in sorted(_extra_abis_by_type.get(contract_type, set()))
+            ]
             data_sources.append(
                 {
                     "name": ds_name,
@@ -491,6 +568,7 @@ def render_visual_subgraph_yaml(
                     "start_block": inst_start_block,
                     "entities": entity_names or [f"{contract_type}Entity"],
                     "event_handlers": event_handlers,
+                    "extra_abis": extra_abis,
                 }
             )
 

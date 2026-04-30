@@ -21,6 +21,10 @@ dataSources:
       abis:
         - name: {{ source.contract_type }}
           file: ./abis/{{ source.abi_path }}
+{% for extra in source.extra_abis %}
+        - name: {{ extra.name }}
+          file: ./abis/{{ extra.abi_path }}
+{% endfor %}
 {% if source.event_handlers %}
       eventHandlers:
 {% for handler in source.event_handlers %}

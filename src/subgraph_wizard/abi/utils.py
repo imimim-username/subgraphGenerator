@@ -320,14 +320,23 @@ def extract_read_functions(abi: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def get_handler_name(event_name: str) -> str:
     """Generate a handler function name for an event.
-    
+
+    The result always capitalises the first character of ``event_name`` so that
+    ``transfer`` and ``Transfer`` both produce ``handleTransfer``.  This matches
+    the behaviour of ``_handler_name()`` in graph_compiler.py, which is the
+    function that actually emits the ``export function handle…`` declaration in
+    the AssemblyScript mapping file.  The two must stay in sync so that the
+    ``handler:`` field in subgraph.yaml always matches the exported name.
+
     Args:
         event_name: Name of the event.
-    
+
     Returns:
         Handler function name (e.g., 'handleTransfer').
     """
-    return f"handle{event_name}"
+    if not event_name:
+        return "handleUnknownEvent"
+    return f"handle{event_name[0].upper()}{event_name[1:]}"
 
 
 def get_entity_name(event_name: str) -> str:
