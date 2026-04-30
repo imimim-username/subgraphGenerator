@@ -83,6 +83,7 @@ class VisualConfig(BaseModel):
     subgraph_name: str = ""
     current_file: str | None = None   # name of the last-active canvas file (for session restore)
     output_mode: str = "graph"        # "graph" | "ponder"
+    ponder_settings: dict[str, Any] = {}  # database, ordering, etc. — ponder mode only
     networks: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -196,6 +197,7 @@ async def config_load(dir: str | None = Query(default=None)) -> JSONResponse:
                 "subgraph_name": "",
                 "current_file": None,
                 "output_mode": "graph",
+                "ponder_settings": {},
                 "networks": [],
                 "nodes": [],
                 "edges": [],

@@ -40,7 +40,7 @@ const KNOWN_NETWORKS = [
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function newInstance() {
-  return { label: '', address: '', startBlock: '' };
+  return { label: '', address: '', startBlock: '', endBlock: '' };
 }
 
 function newNetworkEntry(contractNames) {
@@ -53,6 +53,16 @@ function newNetworkEntry(contractNames) {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+const INPUT_STYLE = {
+  background: 'rgba(0,0,0,0.3)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  padding: '3px 6px',
+  color: 'var(--text-primary)',
+  fontSize: 11,
+  outline: 'none',
+};
+
 function InstanceRow({ inst, onChange, onRemove, canRemove }) {
   return (
     <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
@@ -61,49 +71,28 @@ function InstanceRow({ inst, onChange, onRemove, canRemove }) {
         placeholder="label"
         value={inst.label}
         onChange={(e) => onChange('label', e.target.value)}
-        style={{
-          flex: '0 0 70px',
-          background: 'rgba(0,0,0,0.3)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          padding: '3px 6px',
-          color: 'var(--text-primary)',
-          fontSize: 11,
-          outline: 'none',
-        }}
+        style={{ ...INPUT_STYLE, flex: '0 0 58px' }}
       />
       <input
         className="nodrag"
         placeholder="0x…"
         value={inst.address}
         onChange={(e) => onChange('address', e.target.value)}
-        style={{
-          flex: 1,
-          background: 'rgba(0,0,0,0.3)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          padding: '3px 6px',
-          color: 'var(--text-primary)',
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: 10,
-          outline: 'none',
-        }}
+        style={{ ...INPUT_STYLE, flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
       />
       <input
         className="nodrag"
-        placeholder="block"
+        placeholder="start"
         value={inst.startBlock}
         onChange={(e) => onChange('startBlock', e.target.value)}
-        style={{
-          flex: '0 0 60px',
-          background: 'rgba(0,0,0,0.3)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          padding: '3px 6px',
-          color: 'var(--text-primary)',
-          fontSize: 11,
-          outline: 'none',
-        }}
+        style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
+      />
+      <input
+        className="nodrag"
+        placeholder="end"
+        value={inst.endBlock ?? ''}
+        onChange={(e) => onChange('endBlock', e.target.value)}
+        style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
       />
       {canRemove && (
         <button
@@ -172,18 +161,23 @@ function ContractSection({ contractName, contractData, onUpdate }) {
 
       {/* Column headers */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 3 }}>
-        {['label', 'address', 'startBlock'].map((h) => (
+        {[
+          { key: 'label', flex: '0 0 58px' },
+          { key: 'address', flex: 1 },
+          { key: 'start', flex: '0 0 50px' },
+          { key: 'end', flex: '0 0 50px' },
+        ].map(({ key, flex }) => (
           <div
-            key={h}
+            key={key}
             style={{
               fontSize: 9,
               color: 'var(--text-muted)',
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
-              flex: h === 'address' ? 1 : h === 'label' ? '0 0 70px' : '0 0 60px',
+              flex,
             }}
           >
-            {h}
+            {key}
           </div>
         ))}
       </div>
@@ -203,6 +197,7 @@ function ContractSection({ contractName, contractData, onUpdate }) {
 
 function NetworkSection({ entry, idx, contractNames, onUpdate, onRemove }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const updateContract = (contractName, patch) => {
     onUpdate({
@@ -289,6 +284,44 @@ function NetworkSection({ entry, idx, contractNames, onUpdate, onRemove }) {
               />
             ))
           )}
+          {/* Advanced per-chain options */}
+          <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Advanced
+              </span>
+            </div>
+            {showAdvanced && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>pollingInterval (ms)</span>
+                  <input
+                    type="number"
+                    className="nodrag"
+                    value={entry.pollingInterval ?? ''}
+                    onChange={(e) => onUpdate({ ...entry, pollingInterval: e.target.value !== '' ? Number(e.target.value) : undefined })}
+                    placeholder="default"
+                    style={{ ...INPUT_STYLE, width: 80 }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>maxBlockRange</span>
+                  <input
+                    type="number"
+                    className="nodrag"
+                    value={entry.maxBlockRange ?? ''}
+                    onChange={(e) => onUpdate({ ...entry, maxBlockRange: e.target.value !== '' ? Number(e.target.value) : undefined })}
+                    placeholder="default"
+                    style={{ ...INPUT_STYLE, width: 80 }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

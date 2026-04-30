@@ -69,10 +69,16 @@ def _slug_to_ponder_chain_name(network_slug: str) -> str:
 def render_ponder_config(visual_config: dict[str, Any]) -> str:
     """Generate ponder.config.ts from the visual graph config.
 
-    Produces a ``createConfig({ chains, contracts })`` file.  Each network in
-    the Networks panel becomes one entry in ``chains:``.  Each contract node
-    maps to one entry in ``contracts:``, assigned to the network it is
-    configured on.
+    Produces a ``createConfig({ database?, ordering?, chains, contracts })``
+    file.  Each network in the Networks panel becomes one entry in ``chains:``.
+    Each contract node maps to one entry in ``contracts:``, assigned to the
+    network it is configured on.
+
+    Emits the following options when set by the user:
+    - ``database`` — postgres connection block (pglite is the default, omitted)
+    - ``ordering`` — omnichain (default, omitted), multichain, experimental_isolated
+    - per-chain ``pollingInterval`` and ``maxBlockRange``
+    - per-contract ``endBlock``, ``includeCallTraces``, ``includeTransactionReceipts``
 
     Args:
         visual_config: Parsed visual-config.json dict.
@@ -82,29 +88,41 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     """
     networks_config: list[dict[str, Any]] = visual_config.get("networks", [])
     nodes: list[dict[str, Any]] = visual_config.get("nodes", [])
+    ponder_settings: dict[str, Any] = visual_config.get("ponder_settings", {})
+
+    db_kind: str = ponder_settings.get("database", "pglite")
+    ordering: str = ponder_settings.get("ordering", "omnichain")
 
     # ── Collect unique network slugs in order of appearance ──────────────────
     seen_slugs: list[str] = []
     seen_set: set[str] = set()
+    slug_to_entry: dict[str, dict[str, Any]] = {}
     for net_entry in networks_config:
         slug = net_entry.get("network", "").strip()
         if slug and slug not in seen_set:
             seen_slugs.append(slug)
             seen_set.add(slug)
+            slug_to_entry[slug] = net_entry
 
     # If no network configured, use mainnet as a placeholder
     if not seen_slugs:
         seen_slugs = ["mainnet"]
 
-    # ── Map: contract_type_name → (network_slug, address, startBlock) ────────
-    # When a contract type has multiple instances (multi-network), we pick one
-    # chain per contract (first configured network for that contract type).
-    # Full multi-network support: emit ALL instances across all networks.
-    # We'll build a list of (contract_type, chain_name, address, startBlock).
+    # ── Build contract node data lookup (for per-contract flags) ──────────────
+    contract_node_data: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        if node.get("type") == "contract":
+            ct_name = node.get("data", {}).get("name", "").strip()
+            if ct_name:
+                contract_node_data[ct_name] = node.get("data", {})
+
+    # ── Build contract instance list ──────────────────────────────────────────
+    # Full multi-network support: collect ALL instances across all networks.
+    # Each entry carries (name, chain, address, startBlock, endBlock).
     contract_entries: list[dict[str, Any]] = []
     seen_contract_types: set[str] = set()
 
-    # First pass: pull from networks_config (has addresses + startBlocks)
+    # First pass: pull from networks_config (has addresses + block numbers)
     for net_entry in networks_config:
         slug = net_entry.get("network", "").strip()
         if not slug:
@@ -120,11 +138,17 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                     start_block = int(start_block or 0)
                 except (ValueError, TypeError):
                     start_block = 0
+                end_block_raw = inst.get("endBlock", "")
+                try:
+                    end_block: int | None = int(end_block_raw) if end_block_raw else None
+                except (ValueError, TypeError):
+                    end_block = None
                 contract_entries.append({
                     "name": ct_name,
                     "chain": chain_name,
                     "address": addr,
                     "startBlock": start_block,
+                    "endBlock": end_block,
                 })
                 seen_contract_types.add(ct_name)
 
@@ -135,13 +159,13 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         ct_name = node.get("data", {}).get("name", "").strip()
         if not ct_name or ct_name in seen_contract_types:
             continue
-        # Use first seen network slug as fallback
         chain_name = _slug_to_ponder_chain_name(seen_slugs[0])
         contract_entries.append({
             "name": ct_name,
             "chain": chain_name,
             "address": "",
             "startBlock": 0,
+            "endBlock": None,
         })
         seen_contract_types.add(ct_name)
 
@@ -158,53 +182,94 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         chain_name = _slug_to_ponder_chain_name(slug)
         chain_id = CHAIN_IDS.get(slug, 0)
         env_var = f"PONDER_RPC_URL_{chain_id}"
-        chain_lines.append(
-            f"    {chain_name}: {{ id: {chain_id}, rpc: process.env.{env_var} }},"
-        )
+        net_entry = slug_to_entry.get(slug, {})
+
+        fields: list[str] = [
+            f"id: {chain_id}",
+            f"rpc: process.env.{env_var}",
+        ]
+        polling_raw = net_entry.get("pollingInterval")
+        max_range_raw = net_entry.get("maxBlockRange")
+        if polling_raw not in (None, ""):
+            try:
+                fields.append(f"pollingInterval: {int(polling_raw)}")
+            except (ValueError, TypeError):
+                pass
+        if max_range_raw not in (None, ""):
+            try:
+                fields.append(f"maxBlockRange: {int(max_range_raw)}")
+            except (ValueError, TypeError):
+                pass
+
+        if len(fields) <= 2:
+            # Compact single-line form when no advanced options
+            chain_lines.append(
+                f"    {chain_name}: {{ {', '.join(fields)} }},"
+            )
+        else:
+            # Multi-line form when advanced options are present
+            inner = "".join(f"\n      {f}," for f in fields)
+            chain_lines.append(f"    {chain_name}: {{{inner}\n    }},")
 
     # ── Render contracts block ────────────────────────────────────────────────
-    # Group by contract name; when multiple instances exist on different chains,
-    # Ponder supports per-chain config via an array of addresses.
-    # For simplicity, we emit one entry per (contract, chain) combination.
-    # Users can merge them manually for factory/multi-address patterns.
-    contracts_by_name: dict[str, list[dict]] = {}
+    # Group by contract name; emit the first instance per contract (users can
+    # add more manually for factory / multi-address patterns).
+    contracts_by_name: dict[str, list[dict[str, Any]]] = {}
     for entry in contract_entries:
         contracts_by_name.setdefault(entry["name"], []).append(entry)
 
     contract_lines: list[str] = []
     for ct_name in sorted(contracts_by_name.keys()):
         instances = contracts_by_name[ct_name]
-        if len(instances) == 1:
-            inst = instances[0]
-            addr_val = f'"{inst["address"]}"' if inst["address"] else '"0x0000000000000000000000000000000000000000"'
-            sb_line = f"\n      startBlock: {inst['startBlock']}," if inst["startBlock"] else ""
-            contract_lines.append(
-                f"    {ct_name}: {{\n"
-                f"      chain: \"{inst['chain']}\",\n"
-                f"      abi: {ct_name}Abi,\n"
-                f"      address: {addr_val},{sb_line}\n"
-                f"    }},"
-            )
-        else:
-            # Multiple instances — emit as first instance and comment about extras
-            inst = instances[0]
-            addr_val = f'"{inst["address"]}"' if inst["address"] else '"0x0000000000000000000000000000000000000000"'
-            sb_line = f"\n      startBlock: {inst['startBlock']}," if inst["startBlock"] else ""
-            extras = instances[1:]
-            comment = f"  /* {len(extras)} additional instance(s) not shown — add manually */"
-            contract_lines.append(
-                f"    {ct_name}: {{{comment}\n"
-                f"      chain: \"{inst['chain']}\",\n"
-                f"      abi: {ct_name}Abi,\n"
-                f"      address: {addr_val},{sb_line}\n"
-                f"    }},"
-            )
+        nd = contract_node_data.get(ct_name, {})
+        include_call_traces: bool = nd.get("includeCallTraces", False)
+        include_tx_receipts: bool = nd.get("includeTransactionReceipts", False)
+
+        inst = instances[0]
+        addr_val = (
+            f'"{inst["address"]}"'
+            if inst["address"]
+            else '"0x0000000000000000000000000000000000000000"'
+        )
+
+        fields = [
+            f'chain: "{inst["chain"]}"',
+            f"abi: {ct_name}Abi",
+            f"address: {addr_val}",
+        ]
+        if inst["startBlock"]:
+            fields.append(f"startBlock: {inst['startBlock']}")
+        if inst.get("endBlock"):
+            fields.append(f"endBlock: {inst['endBlock']}")
+        if include_call_traces:
+            fields.append("includeCallTraces: true")
+        if include_tx_receipts:
+            fields.append("includeTransactionReceipts: true")
+
+        extra_comment = ""
+        if len(instances) > 1:
+            extra_comment = f"  /* {len(instances) - 1} additional instance(s) — add manually */"
+
+        inner = "".join(f"\n      {f}," for f in fields)
+        contract_lines.append(f"    {ct_name}: {{{extra_comment}{inner}\n    }},")
 
     # ── Assemble file ─────────────────────────────────────────────────────────
     lines: list[str] = ['import { createConfig } from "ponder";']
     lines.extend(abi_imports)
     lines.append("")
     lines.append("export default createConfig({")
+
+    # database block — only emit for postgres (pglite is the implicit default)
+    if db_kind == "postgres":
+        lines.append("  database: {")
+        lines.append('    kind: "postgres",')
+        lines.append("    connectionString: process.env.DATABASE_URL,")
+        lines.append("  },")
+
+    # ordering — only emit when non-default
+    if ordering and ordering != "omnichain":
+        lines.append(f'  ordering: "{ordering}",')
+
     lines.append("  chains: {")
     lines.extend(chain_lines)
     lines.append("  },")

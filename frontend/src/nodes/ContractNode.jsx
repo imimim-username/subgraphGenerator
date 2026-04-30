@@ -131,7 +131,10 @@ function EventPortGroup({ ev, expanded, onToggle }) {
 export default function ContractNode({ id, data, selected }) {
   const {
     name = '', abi, events = [], readFunctions = [], collapsed = false,
-    address = '', startBlock = '', network = 'mainnet',
+    address = '', startBlock = '', endBlock = '', network = 'mainnet',
+    // Ponder-specific options (persisted in node.data)
+    includeCallTraces = false, includeTransactionReceipts = false,
+    hasSetupHandler = false, showPonderOpts = false,
     // UI state persisted in node.data so it survives save/load
     showEvents = true, showReads = true, expandedEvents = {},
     onChange, onDelete,
@@ -151,7 +154,7 @@ export default function ContractNode({ id, data, selected }) {
   useEffect(() => {
     updateNodeInternals(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, events, collapsed, showEvents, showReads, expandedEventsKey, updateNodeInternals]);
+  }, [id, events, collapsed, showEvents, showReads, expandedEventsKey, hasSetupHandler, showPonderOpts, updateNodeInternals]);
 
   // ── Name change ────────────────────────────────────────────────────────────
   const handleNameChange = useCallback(
@@ -340,6 +343,15 @@ export default function ContractNode({ id, data, selected }) {
             {detectErr && (
               <div style={{ fontSize: 10, color: '#f87171' }}>{detectErr}</div>
             )}
+
+            {/* End block */}
+            <input
+              className="sg-node__input nodrag"
+              placeholder="End block (optional)"
+              value={endBlock}
+              onChange={(e) => onChange({ endBlock: e.target.value })}
+              style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
+            />
           </div>
 
           {/* ABI source buttons */}
@@ -446,6 +458,20 @@ export default function ContractNode({ id, data, selected }) {
                 <span style={{ fontSize: 9, color: 'var(--text-muted)', marginRight: 4 }}>click ▶ for params</span>
                 {showEvents ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </div>
+              {/* Setup handler trigger port */}
+              {hasSetupHandler && (
+                <div className="sg-node__port-row" style={{ position: 'relative' }}>
+                  <span className="sg-node__port-type" style={{ fontSize: 9, color: 'var(--port-event)', opacity: 0.7 }}>trigger</span>
+                  <span className="sg-node__port-label" style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>setup</span>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id="event-setup"
+                    className="event-port"
+                    style={{ right: -6 }}
+                  />
+                </div>
+              )}
               {showEvents && events.map((ev) => (
                 <EventPortGroup
                   key={ev.name}
@@ -486,6 +512,56 @@ export default function ContractNode({ id, data, selected }) {
                 />
               ))}
             </>
+          )}
+
+          {/* ── Ponder Options ── */}
+          <div className="sg-node__divider" />
+          <div
+            className="sg-node__section"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+            onClick={() => onChange({ showPonderOpts: !showPonderOpts })}
+          >
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+              Ponder Options
+            </span>
+            {showPonderOpts ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          </div>
+          {showPonderOpts && (
+            <div className="sg-node__section" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  className="nodrag"
+                  checked={includeTransactionReceipts}
+                  onChange={(e) => onChange({ includeTransactionReceipts: e.target.checked })}
+                  style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                />
+                includeTransactionReceipts
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  className="nodrag"
+                  checked={includeCallTraces}
+                  onChange={(e) => onChange({ includeCallTraces: e.target.checked })}
+                  style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                />
+                includeCallTraces
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  className="nodrag"
+                  checked={hasSetupHandler}
+                  onChange={(e) => onChange({ hasSetupHandler: e.target.checked })}
+                  style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                />
+                setup handler
+                {hasSetupHandler && (
+                  <span style={{ fontSize: 9, color: 'var(--port-event)', marginLeft: 4 }}>← port added in Events</span>
+                )}
+              </label>
+            </div>
           )}
 
           {/* Placeholder when no ABI yet */}

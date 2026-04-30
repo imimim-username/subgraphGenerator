@@ -180,6 +180,24 @@ class PonderCompiler:
                     entity_names_needed.update(used_entities)
                     abi_imports_needed.update(used_abis)
 
+            # Setup handler — emitted when the user enables it on the contract node
+            if data.get("hasSetupHandler"):
+                block, used_entities, used_abis = self._compile_handler(
+                    contract_node=contract_node,
+                    event={"name": "setup", "params": []},
+                )
+                if block:
+                    handler_blocks.append(block)
+                    entity_names_needed.update(used_entities)
+                    abi_imports_needed.update(used_abis)
+                else:
+                    # No entities wired — emit a minimal stub so the file is valid
+                    handler_blocks.append(
+                        f'ponder.on("{contract_type}:setup", async ({{ context }}) => {{\n'
+                        f"  // TODO: seed initial state here\n"
+                        f"}});\n"
+                    )
+
         # ── Assemble imports ──
         lines: list[str] = ['import { ponder } from "ponder:registry";']
 
@@ -283,9 +301,11 @@ class PonderCompiler:
 
         body = textwrap.indent("\n".join(body_lines), "  ")
 
+        # setup handlers receive only `context`; all others receive `event` too
+        params = "{ context }" if event_name == "setup" else "{ event, context }"
         block = (
             f'ponder.on("{contract_type}:{event_name}", '
-            f'async ({{ event, context }}) => {{\n'
+            f'async ({params}) => {{\n'
             f"{body}\n"
             f"}});\n"
         )
@@ -383,7 +403,8 @@ class PonderCompiler:
             extra_abi_imports.update(dep_abis)
 
         # ── ID expression ──
-        id_expr = "event.id"
+        # setup has no event object, so default to a static string
+        id_expr = '"initial"' if event_name == "setup" else "event.id"
         id_edge = self._edge_by_target.get((entity_id, "field-id"))
         if id_edge:
             id_expr, id_stmts, id_abis = self._resolve_value_ts(

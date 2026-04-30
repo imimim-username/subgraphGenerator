@@ -95,6 +95,9 @@ export default function App() {
   const [genModalOpen, setGenModalOpen] = useState(false);
   const [genDir, setGenDir] = useState('');           // user-chosen output directory
   const [outputMode, setOutputMode] = useState('graph'); // 'graph' | 'ponder'
+  const [ponderSettings, setPonderSettings] = useState({ // persisted Ponder config
+    database: 'pglite', dbUrl: '', ordering: 'omnichain',
+  });
 
   // ── File management state ─────────────────────────────────────────────────
   const [currentFile, setCurrentFile]       = useState(null);   // name of open canvas file (null = untitled)
@@ -230,6 +233,7 @@ export default function App() {
     setSubgraphName(data.subgraph_name ?? '');
     setNetworks(data.networks ?? []);
     setOutputMode(data.output_mode ?? 'graph');
+    setPonderSettings(data.ponder_settings ?? { database: 'pglite', dbUrl: '', ordering: 'omnichain' });
     setCurrentFile(name);
 
     // Allow React to flush all the state updates, then clear dirty flag
@@ -237,7 +241,7 @@ export default function App() {
       suppressDirtyRef.current = false;
       setIsDirty(false);
     }, 0);
-  }, [updateNodeData, deleteNode, setNodes, setEdges, setSubgraphName, setNetworks, setOutputMode]);
+  }, [updateNodeData, deleteNode, setNodes, setEdges, setSubgraphName, setNetworks, setOutputMode, setPonderSettings]);
 
   // ── Clear the canvas (new canvas) — assumes dirty check already done ─────
   const newCanvas = useCallback(() => {
@@ -295,6 +299,7 @@ export default function App() {
           setNetworks(config.networks ?? []);
           setSubgraphName(config.subgraph_name ?? '');
           setOutputMode(config.output_mode ?? 'graph');
+          setPonderSettings(config.ponder_settings ?? { database: 'pglite', dbUrl: '', ordering: 'omnichain' });
           // Restore which file was open in the last session
           if (config.current_file) setCurrentFile(config.current_file);
 
@@ -422,6 +427,7 @@ export default function App() {
     subgraph_name: subgraphName,
     current_file: currentFile,
     output_mode: outputMode,
+    ponder_settings: ponderSettings,
     networks,
     nodes: nodes.map((n) => ({
       id: n.id,
@@ -436,7 +442,7 @@ export default function App() {
       target: e.target,
       targetHandle: e.targetHandle ?? '',
     })),
-  }), [subgraphName, currentFile, outputMode, networks, nodes, edges]);
+  }), [subgraphName, currentFile, outputMode, ponderSettings, networks, nodes, edges]);
 
   // ── Session save (visual-config.json) — for restore on next startup ──────
   // Called automatically whenever an explicit Save or Save As completes.
@@ -1139,6 +1145,9 @@ export default function App() {
       {genModalOpen && (
         <GenerateModal
           initialDir={genDir}
+          outputMode={outputMode}
+          ponderSettings={ponderSettings}
+          onPonderSettingsChange={setPonderSettings}
           onConfirm={(dir) => { setGenDir(dir); generateFiles(dir); }}
           onClose={() => setGenModalOpen(false)}
         />
