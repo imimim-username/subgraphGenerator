@@ -606,6 +606,44 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                             node_id=nid,
                         )
 
+    # ── Ponder-mode-specific checks ───────────────────────────────────────────
+    output_mode = visual_config.get("output_mode", "graph")
+    if output_mode == "ponder":
+        # Warn for BigDecimal fields — Ponder has no native decimal type
+        for node in nodes:
+            ntype = node.get("type", "")
+            if ntype not in ("entity", "aggregateentity"):
+                continue
+            nid = node["id"]
+            data = node.get("data", {})
+            for fld in data.get("fields", []):
+                if fld.get("type") == "BigDecimal":
+                    fname = fld.get("name", "?")
+                    _warn(
+                        "PONDER_BIGDECIMAL_UNSUPPORTED",
+                        f"Entity '{data.get('name', nid)}' field '{fname}' is BigDecimal. "
+                        f"Ponder has no native decimal type — it will be stored as text. "
+                        f"Consider changing the field type to BigInt (store values in base units "
+                        f"like wei) or String.",
+                        node_id=nid,
+                    )
+
+        # Warn for unknown chain IDs
+        try:
+            from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+        except ImportError:
+            CHAIN_IDS = {}
+        networks_cfg: list[dict[str, Any]] = visual_config.get("networks", [])
+        for net_entry in networks_cfg:
+            slug = net_entry.get("network", "").strip()
+            if slug and slug not in CHAIN_IDS:
+                _warn(
+                    "PONDER_UNKNOWN_CHAIN_ID",
+                    f"Network '{slug}' is not in the known chain ID table. "
+                    f"Ponder requires a numeric chain ID — the generated ponder.config.ts "
+                    f"will use id: 0 as a placeholder. Update it manually before deploying.",
+                )
+
     # ── Per-edge type checks ───────────────────────────────────────────────────
     for edge in edges:
         eid = edge.get("id", "")
