@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+:root {
+  --bg-canvas: #0f172a;
+  --bg-node: #1e293b;
+  --border: #334155;
+  --text-primary: #e2e8f0;
+  --text-muted: #94a3b8;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
+  --port-event: #f59e0b;
+  --port-read: #10b981;
+  --port-field: #3b82f6;
+  --port-implicit: #64748b;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── React Flow canvas ── */
+.react-flow__renderer { background: var(--bg-canvas); }
+.react-flow__background { background: var(--bg-canvas); }
+
+/* ── Handles (ports) ── */
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-node);
+}
+.react-flow__handle.event-port    { background: var(--port-event); }
+.react-flow__handle.read-port     { background: var(--port-read); }
+.react-flow__handle.field-port    { background: var(--port-field); }
+.react-flow__handle.implicit-port { background: var(--port-implicit); }
+
+/* ── Node shell ── */
+.sg-node {
+  background: var(--bg-node);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 240px;
+  font-size: 13px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+.sg-node--selected {
+  border-color: var(--accent-light);
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 24px rgba(0,0,0,0.4);
+}
+.sg-node__header {
+  padding: 8px 12px;
+  border-radius: 8px 8px 0 0;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sg-node__body {
+  padding: 8px 0;
+}
+.sg-node__section {
+  padding: 4px 12px;
+}
+.sg-node__divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+.sg-node__port-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 3px 12px;
+  position: relative;
+  cursor: default;
+}
+.sg-node__port-row:hover { background: rgba(255,255,255,0.04); }
+.sg-node__port-row--left { justify-content: flex-start; }
+.sg-node__port-label {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.sg-node__port-type {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+}
+.sg-node__input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  width: 100%;
+  outline: none;
+}
+.sg-node__input:focus { border-color: var(--accent-light); }
+.sg-node__btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.sg-node__btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-primary);
+}
+.sg-node__instance-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px;
+}
+.sg-node__instance-row input {
+  flex: 1;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+}
+.sg-node__instance-row input:focus { border-color: var(--accent-light); }
+
+/* ── Validation outlines (applied via className on React Flow nodes) ── */
+.react-flow__node.has-validation-error {
+  outline: 2px solid #ef4444 !important;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.react-flow__node.has-validation-warning {
+  outline: 2px solid #f59e0b !important;
+  outline-offset: 3px;
+  border-radius: 10px;
+}

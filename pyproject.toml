@@ -1,0 +1,67 @@
+[project]
+name = "subgraph-wizard"
+version = "0.1.0"
+description = "A modular, extensible Python-based tool that interactively generates ready-to-deploy subgraph projects for The Graph"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "jinja2>=3.1.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+    "requests>=2.28.0",
+    "uvicorn>=0.27.0",
+]
+
+[project.scripts]
+subgraph-wizard = "subgraph_wizard.main:run"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Ship the pre-built React bundle and Jinja2 templates as package data.
+# Contributers: run `cd frontend && npm install && npm run build` to
+# regenerate src/subgraph_wizard/static/ before publishing.
+[tool.setuptools.package-data]
+subgraph_wizard = [
+    "static/**/*",
+    "templates/**/*.j2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.ruff]
+# Ruff configuration for linting and formatting
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Enable specific rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"

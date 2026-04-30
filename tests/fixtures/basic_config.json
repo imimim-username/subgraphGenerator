@@ -1,0 +1,17 @@
+{
+  "config_version": 1,
+  "name": "sample-token-subgraph",
+  "network": "ethereum",
+  "output_dir": "output/sample-token",
+  "complexity": "basic",
+  "mappings_mode": "auto",
+  "contracts": [
+    {
+      "name": "SampleToken",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "start_block": 10000000,
+      "abi_path": "SampleToken.json",
+      "index_events": true
+    }
+  ]
+}

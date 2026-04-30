@@ -1,0 +1,8 @@
+// Auto-generated mapping file for {{ contract_name }}
+// Network: {{ network }}
+
+import { BigInt, Bytes } from "@graphprotocol/graph-ts";
+{% for import_item in imports %}
+import { {{ import_item.types | join(", ") }} } from "{{ import_item.from }}";
+{% endfor %}
+

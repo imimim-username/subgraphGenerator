@@ -1,0 +1,451 @@
+"""Visual graph validator.
+
+Validates a visual-config.json graph and returns a list of structured
+error/warning objects. These are returned by POST /api/validate and also
+consumed by the frontend to highlight problem nodes and edges.
+
+Error structure:
+  {
+    "level":   "error" | "warning",
+    "code":    str,          # machine-readable code e.g. "MISSING_ID"
+    "message": str,          # human-readable description
+    "node_id": str | None,   # canvas node that caused the issue
+    "edge_id": str | None,   # canvas edge that caused the issue
+  }
+
+Validation rules
+────────────────
+Errors (block generation):
+  CONTRACT_NO_NAME          — Contract node has no type name
+  CONTRACT_NO_ABI           — Contract node has no ABI loaded
+  ENTITY_NO_NAME            — Entity node has no entity name
+  ENTITY_NO_ID_WIRED        — Entity node has no value wired to its id field
+  TYPE_MISMATCH             — Edge connects ports with incompatible Graph types
+  CONTRACTREAD_NO_CONTRACT  — ContractRead node has no contract selected
+  CONTRACTREAD_BAD_FN_INDEX — ContractRead node function index out of range
+  AGGREGATE_NO_NAME         — Aggregate entity node has no name
+  AGGREGATE_NO_ID_WIRED     — Aggregate entity node has no value wired to its id field
+
+Warnings (generation continues but output may be incomplete):
+  CONTRACT_EMPTY_INSTANCE    — A contract instance row has no address
+  ENTITY_NO_FIELDS           — Entity has only the id field (and it's not wired)
+  DISCONNECTED_CONTRACT      — Contract node has no events wired to any entity
+  DISCONNECTED_ENTITY        — Entity node has no incoming wired fields at all
+  MATH_DISCONNECTED_INPUT    — Math/concat node has an unwired input
+  STRCONCAT_DISCONNECTED     — String Concat node has an unwired input
+  CONDITIONAL_NO_CONDITION   — Conditional node has no condition wired (guard never fires)
+  TYPECAST_BAD_INDEX         — TypeCast castIndex out of valid range (0–6)
+  AGGREGATE_NO_FIELDS        — Aggregate entity has no field-in-* wires (only id)
+  DISCONNECTED_AGGREGATE     — Aggregate entity node has no incoming connections
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ── Graph type compatibility table ────────────────────────────────────────────
+# Maps source Graph type → set of compatible target Graph types.
+# "any" is a wildcard that accepts everything.
+
+# Primitive types known to the type system (everything else is an entity reference)
+_GQL_PRIMITIVES: frozenset[str] = frozenset({
+    "ID", "String", "Bytes", "Boolean", "Int", "BigInt", "BigDecimal", "Address",
+})
+
+_COMPATIBLE: dict[str, set[str]] = {
+    "BigInt":     {"BigInt", "any"},
+    "Int":        {"Int", "BigInt", "any"},
+    "BigDecimal": {"BigDecimal", "any"},
+    "Bytes":      {"Bytes", "Address", "String", "ID", "any"},
+    "Address":    {"Address", "Bytes", "String", "ID", "any"},
+    "String":     {"String", "ID", "any"},
+    "Boolean":    {"Boolean", "any"},
+    "ID":         {"ID", "String", "any"},
+    "any":        {"BigInt", "Int", "BigDecimal", "Bytes", "Address", "String", "Boolean", "ID", "any"},
+}
+
+
+def _types_compatible(from_type: str, to_type: str) -> bool:
+    """Return True if a value of from_type can be wired to a port expecting to_type."""
+    if from_type == to_type:
+        return True
+    return to_type in _COMPATIBLE.get(from_type, set())
+
+
+# ── Port type resolvers ───────────────────────────────────────────────────────
+
+def _source_port_type(
+    node: dict[str, Any],
+    handle: str,
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> str:
+    """Infer the Graph type produced by a source (output) port."""
+    node_type = node.get("type", "")
+    data = node.get("data", {})
+
+    if node_type == "contract":
+        # event-{EventName}-{paramName} → look up in events list
+        if handle.startswith("event-") and handle.count("-") >= 2:
+            parts = handle.split("-", 2)
+            event_name, param_name = parts[1], parts[2]
+            for ev in data.get("events", []):
+                if ev.get("name") == event_name:
+                    for p in ev.get("params", []):
+                        if p.get("name") == param_name:
+                            return p.get("graph_type", "any")
+        # implicit-address, implicit-block-number, etc.
+        if handle in ("implicit-address", "implicit-instance-address"):
+            return "Address"
+        if handle in ("implicit-block-number", "implicit-block-timestamp"):
+            return "BigInt"
+        if handle == "implicit-tx-hash":
+            return "Bytes"
+        return "any"
+
+    if node_type == "math":
+        return "BigInt"
+
+    if node_type == "typecast":
+        cast_index = data.get("castIndex", 0)
+        _CAST_TO = ["Int", "String", "String", "Address", "Bytes", "String", "Bytes"]
+        return _CAST_TO[cast_index] if cast_index < len(_CAST_TO) else "any"
+
+    if node_type == "strconcat":
+        return "String"
+
+    if node_type == "conditional":
+        return "any"
+
+    if node_type == "aggregateentity":
+        # field-out-id — exposes the aggregate's stable ID as an output
+        if handle == "field-out-id":
+            return "ID"
+        # field-prev-{name} — return the declared type of that field
+        if handle.startswith("field-prev-"):
+            field_name = handle[len("field-prev-"):]
+            for f in data.get("fields", []):
+                if f.get("name") == field_name:
+                    return f.get("type", "any")
+        return "any"
+
+    if node_type == "contractread":
+        fn_index = data.get("fnIndex", 0)
+        ref_id = data.get("contractNodeId", "")
+        ref_node = nodes_by_id.get(ref_id)
+        if ref_node:
+            read_fns = ref_node["data"].get("readFunctions", [])
+            if fn_index < len(read_fns):
+                outputs = read_fns[fn_index].get("outputs", [])
+                if handle.startswith("out-"):
+                    out_name = handle[4:]
+                    for o in outputs:
+                        if o.get("name") == out_name:
+                            return o.get("graph_type", "any")
+        return "any"
+
+    return "any"
+
+
+def _target_port_type(
+    node: dict[str, Any],
+    handle: str,
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> str:
+    """Infer the Graph type expected by a target (input) port."""
+    node_type = node.get("type", "")
+    data = node.get("data", {})
+
+    if node_type == "entity":
+        # field-{name} → look up in fields list
+        if handle.startswith("field-"):
+            field_name = handle[6:]
+            for f in data.get("fields", []):
+                if f.get("name") == field_name:
+                    ftype = f.get("type", "any")
+                    # Entity-ref types (e.g. AlchemistTVL) accept any ID-like value
+                    if ftype not in _GQL_PRIMITIVES:
+                        return "any"
+                    return ftype
+        return "any"
+
+    if node_type == "math":
+        return "BigInt"  # both inputs expect BigInt
+
+    if node_type == "typecast":
+        cast_index = data.get("castIndex", 0)
+        _CAST_FROM = ["BigInt", "BigInt", "Bytes", "Bytes", "String", "Address", "Address"]
+        return _CAST_FROM[cast_index] if cast_index < len(_CAST_FROM) else "any"
+
+    if node_type == "strconcat":
+        return "String"
+
+    if node_type == "conditional":
+        if handle == "condition":
+            return "Boolean"
+        return "any"
+
+    if node_type == "contractread":
+        if handle == "bind-address":
+            return "Address"
+        fn_index = data.get("fnIndex", 0)
+        ref_id = data.get("contractNodeId", "")
+        ref_node = nodes_by_id.get(ref_id)
+        if ref_node:
+            read_fns = ref_node["data"].get("readFunctions", [])
+            if fn_index < len(read_fns):
+                inputs = read_fns[fn_index].get("inputs", [])
+                if handle.startswith("in-"):
+                    arg_name = handle[3:]
+                    for inp in inputs:
+                        if inp.get("name") == arg_name:
+                            return inp.get("graph_type", "any")
+        return "any"
+
+    return "any"
+
+
+# ── Main validator ────────────────────────────────────────────────────────────
+
+
+def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate a visual graph config and return a list of issues.
+
+    Args:
+        visual_config: Parsed visual-config.json dict.
+
+    Returns:
+        List of issue dicts with keys: level, code, message, node_id, edge_id.
+    """
+    issues: list[dict[str, Any]] = []
+
+    nodes: list[dict[str, Any]] = visual_config.get("nodes", [])
+    edges: list[dict[str, Any]] = visual_config.get("edges", [])
+    nodes_by_id: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+
+    # Build quick lookup: which target handles have incoming edges
+    wired_targets: set[tuple[str, str]] = {
+        (e["target"], e.get("targetHandle", "")) for e in edges
+    }
+    # Source nodes that have at least one outgoing edge
+    wired_sources: set[str] = {e["source"] for e in edges}
+
+    def _err(code, message, node_id=None, edge_id=None):
+        issues.append({
+            "level": "error",
+            "code": code,
+            "message": message,
+            "node_id": node_id,
+            "edge_id": edge_id,
+        })
+
+    def _warn(code, message, node_id=None, edge_id=None):
+        issues.append({
+            "level": "warning",
+            "code": code,
+            "message": message,
+            "node_id": node_id,
+            "edge_id": edge_id,
+        })
+
+    # ── Per-node checks ────────────────────────────────────────────────────────
+    for node in nodes:
+        nid = node["id"]
+        ntype = node.get("type", "")
+        data = node.get("data", {})
+
+        if ntype == "contract":
+            if not data.get("name", "").strip():
+                _err("CONTRACT_NO_NAME", "Contract node has no type name.", node_id=nid)
+
+            if not data.get("abi"):
+                _err("CONTRACT_NO_ABI", f"Contract node '{data.get('name', nid)}' has no ABI loaded.", node_id=nid)
+
+            # Check that at least one event port has an outgoing edge
+            events = data.get("events", [])
+            if events:
+                event_port_ids = {f"event-{ev['name']}" for ev in events}
+                has_wired_event = any(
+                    e["source"] == nid and e.get("sourceHandle", "") in event_port_ids
+                    for e in edges
+                )
+                if not has_wired_event:
+                    _warn(
+                        "DISCONNECTED_CONTRACT",
+                        f"Contract '{data.get('name', nid)}' has no events wired to any entity or aggregate.",
+                        node_id=nid,
+                    )
+
+        elif ntype == "entity":
+            if not data.get("name", "").strip():
+                _err("ENTITY_NO_NAME", "Entity node has no name.", node_id=nid)
+
+            fields = data.get("fields", [])
+            non_id_fields = [f for f in fields if f.get("name") != "id"]
+
+            # Check id field is wired — only required when ID strategy is 'custom'
+            # (tx_hash / tx_hash_log / event_address auto-generate the id in code)
+            id_strategy = data.get("idStrategy", "custom")
+            if id_strategy == "custom":
+                if ("field-id" not in {h for (tid, h) in wired_targets if tid == nid}):
+                    _err(
+                        "ENTITY_NO_ID_WIRED",
+                        f"Entity '{data.get('name', nid)}' has no value wired to its 'id' field.",
+                        node_id=nid,
+                    )
+
+            # Warn if no non-id fields wired
+            wired_field_handles = {h for (tid, h) in wired_targets if tid == nid and h != "field-id"}
+            if not wired_field_handles and non_id_fields:
+                _warn(
+                    "ENTITY_NO_FIELDS",
+                    f"Entity '{data.get('name', nid)}' has no fields wired (other than id).",
+                    node_id=nid,
+                )
+
+            # Disconnected entirely
+            if nid not in {e["target"] for e in edges}:
+                _warn(
+                    "DISCONNECTED_ENTITY",
+                    f"Entity '{data.get('name', nid)}' has no incoming connections.",
+                    node_id=nid,
+                )
+
+        elif ntype == "math":
+            for port in ("left", "right"):
+                if (nid, port) not in wired_targets:
+                    _warn(
+                        "MATH_DISCONNECTED_INPUT",
+                        f"Math node '{nid}' has no value wired to '{port}' — will use BigInt.zero().",
+                        node_id=nid,
+                    )
+
+        elif ntype == "strconcat":
+            for port in ("left", "right"):
+                if (nid, port) not in wired_targets:
+                    _warn(
+                        "STRCONCAT_DISCONNECTED",
+                        f"String Concat node '{nid}' has no value wired to '{port}' — will use empty string.",
+                        node_id=nid,
+                    )
+
+        elif ntype == "typecast":
+            _CAST_MAX_INDEX = 6
+            cast_index = data.get("castIndex", 0)
+            if not isinstance(cast_index, int) or cast_index < 0 or cast_index > _CAST_MAX_INDEX:
+                _warn(
+                    "TYPECAST_BAD_INDEX",
+                    f"TypeCast node '{nid}' has an invalid castIndex ({cast_index!r}); "
+                    f"must be 0–{_CAST_MAX_INDEX}.",
+                    node_id=nid,
+                )
+
+        elif ntype == "conditional":
+            if (nid, "condition") not in wired_targets:
+                _warn(
+                    "CONDITIONAL_NO_CONDITION",
+                    f"Conditional node '{nid}' has no condition wired — the guard will never fire.",
+                    node_id=nid,
+                )
+
+        elif ntype == "aggregateentity":
+            if not data.get("name", "").strip():
+                _err("AGGREGATE_NO_NAME", "Aggregate entity node has no name.", node_id=nid)
+
+            # id must always be wired for aggregates
+            if ("field-id" not in {h for (tid, h) in wired_targets if tid == nid}):
+                _err(
+                    "AGGREGATE_NO_ID_WIRED",
+                    f"Aggregate entity '{data.get('name', nid)}' has no value wired to its 'id' field.",
+                    node_id=nid,
+                )
+
+            # Warn if no field-in-* ports are wired (only id)
+            wired_in_handles = {h for (tid, h) in wired_targets if tid == nid and h.startswith("field-in-")}
+            if not wired_in_handles:
+                _warn(
+                    "AGGREGATE_NO_FIELDS",
+                    f"Aggregate entity '{data.get('name', nid)}' has no field inputs wired (field-in-*).",
+                    node_id=nid,
+                )
+
+            # Disconnected entirely — OK if triggerEvents checklist has selections
+            has_trigger_events = bool(data.get("triggerEvents"))
+            if nid not in {e["target"] for e in edges} and not has_trigger_events:
+                _warn(
+                    "DISCONNECTED_AGGREGATE",
+                    f"Aggregate entity '{data.get('name', nid)}' has no incoming connections "
+                    f"and no trigger events selected.",
+                    node_id=nid,
+                )
+
+        elif ntype == "contractread":
+            ref_contract_id = data.get("contractNodeId", "")
+            # If contractNodeId is empty, apply the same fallback the UI uses:
+            # resolve to the first contract node on the canvas. This avoids false-
+            # positive errors when a node was saved before its contract was persisted
+            # (e.g. when all contracts are collapsed and the component never mounted).
+            if not ref_contract_id:
+                first_contract = next(
+                    (n for n in nodes if n.get("type") == "contract" and n.get("data", {}).get("name")),
+                    None,
+                )
+                ref_contract_id = first_contract["id"] if first_contract else ""
+            if not ref_contract_id or ref_contract_id not in nodes_by_id:
+                _err(
+                    "CONTRACTREAD_NO_CONTRACT",
+                    f"Contract Read node '{nid}' has no contract selected.",
+                    node_id=nid,
+                )
+            else:
+                ref_node = nodes_by_id[ref_contract_id]
+                read_fns = ref_node["data"].get("readFunctions", [])
+                fn_index = data.get("fnIndex", 0)
+                if not isinstance(fn_index, int) or fn_index < 0 or fn_index >= max(len(read_fns), 1):
+                    _err(
+                        "CONTRACTREAD_BAD_FN_INDEX",
+                        f"Contract Read node '{nid}' function index ({fn_index}) is out of range "
+                        f"(contract has {len(read_fns)} read function(s)).",
+                        node_id=nid,
+                    )
+
+    # ── Per-edge type checks ───────────────────────────────────────────────────
+    for edge in edges:
+        eid = edge.get("id", "")
+        src_id = edge.get("source", "")
+        src_handle = edge.get("sourceHandle", "")
+        tgt_id = edge.get("target", "")
+        tgt_handle = edge.get("targetHandle", "")
+
+        src_node = nodes_by_id.get(src_id)
+        tgt_node = nodes_by_id.get(tgt_id)
+
+        if not src_node or not tgt_node:
+            continue
+
+        src_type = _source_port_type(src_node, src_handle, nodes_by_id)
+        tgt_type = _target_port_type(tgt_node, tgt_handle, nodes_by_id)
+
+        # Skip checks when either side is "any" (wildcard)
+        if src_type == "any" or tgt_type == "any":
+            continue
+
+        if not _types_compatible(src_type, tgt_type):
+            _err(
+                "TYPE_MISMATCH",
+                (
+                    f"Type mismatch: '{src_type}' (from {src_node['data'].get('name', src_id)}.{src_handle}) "
+                    f"cannot be assigned to '{tgt_type}' "
+                    f"(field {tgt_node['data'].get('name', tgt_id)}.{tgt_handle})."
+                ),
+                edge_id=eid,
+            )
+
+    return issues
+
+
+def has_errors(issues: list[dict[str, Any]]) -> bool:
+    """Return True if any issue has level='error'."""
+    return any(i["level"] == "error" for i in issues)

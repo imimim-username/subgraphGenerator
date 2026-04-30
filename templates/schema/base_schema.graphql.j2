@@ -1,0 +1,20 @@
+# Auto-generated GraphQL schema for {{ subgraph_name }}
+# Network: {{ network }}
+
+{% for entity in entities %}
+type {{ entity.name }} @entity(immutable: true) {
+  id: ID!
+{% for field in entity.fields %}
+{% if field.derived_from %}
+  {{ field.name }}: {{ field.type }} @derivedFrom(field: "{{ field.derived_from }}")
+{% else %}
+  {{ field.name }}: {{ field.type }}{{ "!" if field.required else "" }}
+{% endif %}
+{% endfor %}
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+{% endfor %}
+

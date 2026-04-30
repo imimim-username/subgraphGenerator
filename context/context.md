@@ -466,9 +466,7 @@ cd frontend && npm run build
 
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
 - Branch: `main`
-- SSH key: `REMOVED`
-- Setup: `cp REMOVED ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519`
-- Push command: `git push` (after SSH key setup above)
+- Push command: `git push`
 
 ---
 

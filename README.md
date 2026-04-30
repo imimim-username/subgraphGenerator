@@ -1,0 +1,286 @@
+
+# Subgraph Generator
+
+A visual drag-and-drop tool for building [The Graph](https://thegraph.com/) subgraphs.
+Wire together nodes on a canvas to describe what on-chain data you want to index, then click
+**Generate** — the tool writes all your AssemblyScript mapping files, `schema.graphql`,
+`subgraph.yaml`, `networks.json`, `package.json` (with codegen/build/deploy npm scripts),
+and `howto.md` (a step-by-step deployment guide to The Graph Studio) automatically.
+
+---
+
+## Quick start
+
+```bash
+# Create and activate a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+
+pip install -e .
+subgraph-wizard --ui      # opens http://localhost:5173
+```
+
+The canvas opens in your browser. From there:
+
+1. Drop a **Contract** node → upload or paste its ABI JSON (or fetch from Etherscan).
+2. Drop an **Entity** node → wire an event output port (amber) to the entity's `evt` input port.
+   Fields populate automatically from the event's parameters.
+3. Open the **Networks** panel → add the deployed contract address and start block.
+4. Type a subgraph name and click **Generate**. A directory-picker modal opens — choose where
+   to write the files (type a path or browse the server filesystem). Click **Generate** in
+   the modal to confirm.
+
+The output files are written to the chosen directory. Open a terminal there and run
+`npm install && npm run codegen && npm run build` to compile. See the generated `howto.md`
+for the full deployment walkthrough.
+
+**CLI flags:**
+
+```bash
+subgraph-wizard --ui                # default port 5173
+subgraph-wizard --ui --port 8080   # custom port
+subgraph-wizard --ui --no-browser  # headless / server mode
+```
+
+---
+
+## Node types
+
+### Contract
+Represents a deployed smart contract. Upload or paste its ABI JSON. Output ports appear
+automatically — one amber trigger port per event, plus implicit ports for the block context.
+
+| Port | Description |
+|---|---|
+| `implicit-address` | `event.address` — the contract address at event-fire time (runtime) |
+| `implicit-instance-address` | The hardcoded deployed address from the Networks config |
+| `implicit-tx-hash` | Transaction hash |
+| `implicit-block-number` | Block number |
+| `implicit-block-timestamp` | Unix timestamp |
+| `event-{Name}` | Amber trigger port — wire to an Entity `evt` port |
+| `event-{Name}-{param}` | Individual event parameter — click the ▶ chevron to reveal |
+
+### Entity
+Creates one new record per event occurrence — good for transaction history. Wire a Contract
+event port to the `evt` input, add fields, choose an ID strategy. Field types include all
+GraphQL primitives (`BigInt`, `String`, `Bytes`, `Address`, etc.) and references to other
+entity types. Mark an entity-reference field as `@derivedFrom` to create a virtual reverse
+relation (no data stored, resolved at query time by The Graph).
+
+### Aggregate Entity
+A singleton record updated in-place — good for running totals and current state.
+
+**How to connect events:** use the **Trigger Events** checklist inside the node header.
+Tick each event (from any contract on the canvas) that should fire this aggregate's handler.
+No `evt` wire is used.
+
+| Port | Description |
+|---|---|
+| `field-id` (in) | Stable lookup key — wire a fixed address or other stable value |
+| `field-in-{name}` (in) | New value to write — usually a Math node result |
+| `field-out-id` (out) | Exposes the stable ID for use as a foreign key in a history Entity |
+| `field-prev-{name}` (out) | Previous value before this update — feed into Math nodes |
+
+### Math
+Performs a single arithmetic operation (`+`, `-`, `×`, `÷`, `%`, `^`) on two `BigInt` or
+`BigDecimal` inputs and outputs the result. Both inputs must be wired.
+
+### TypeCast
+Converts between Graph types. Available casts: `BigInt → Int`, `BigInt → String`,
+`Bytes → String`, `Bytes → Address`, `String → Bytes`, `Address → String`, `Address → Bytes`.
+
+### String Concat
+Joins two `String` or `Bytes` values with an optional separator. Useful for building
+composite entity IDs (e.g. `poolAddress-userAddress`).
+
+### Conditional
+Boolean guard. If the `condition` input is false, the entire handler exits early — nothing
+downstream is saved or executed.
+
+### Contract Read
+Calls a view/pure function on a contract during an event handler to fetch data that wasn't
+in the event itself (e.g. `balanceOf` after a Transfer).
+
+Select the target contract and function from dropdowns — ports appear from the ABI.
+The node **automatically uses the configured instance address** for the selected contract;
+no address wire is needed. To call the function at a dynamic address, wire it into the
+optional `address` override input port.
+
+---
+
+## Wiring rules
+
+- Draw wires from output ports (right side) to input ports (left side).
+- A red animated wire indicates a type mismatch — insert a TypeCast node to fix it.
+- Unwired Entity field ports are filled automatically from the event parameter of the same name.
+- The Generate button is disabled while validation errors (red outlines) exist. Warnings
+  (amber outlines) are advisory and don't block generation.
+- Delete a wire or node by selecting it and pressing `Delete` / `Backspace`.
+
+---
+
+## Networks panel
+
+Open with the **Networks** button. Add one entry per deployment target (e.g. mainnet, Arbitrum).
+For each network, set the deployed address and start block for every Contract node. You can
+add multiple **instances** of the same contract type (useful for factory patterns).
+
+`networks.json` is written alongside the other output files so you can deploy to each network
+by name with `graph deploy`.
+
+---
+
+## Generate
+
+Click **Generate** in the toolbar to open the directory-picker modal. The modal has two modes:
+
+| Mode | How it works |
+|---|---|
+| **Type path** (default) | Free-form monospace text input. Type or paste any absolute path. Press `Enter` or click Generate to confirm. Press `Escape` or click outside to cancel. |
+| **Browse…** | Server-backed filesystem navigator. Click folders to descend into them; use the ↑ button to go up; click the folder-plus icon to create a new subdirectory. Click **Type path** to return to manual entry. |
+
+**Output files written to the chosen directory:**
+
+| File | Description |
+|---|---|
+| `subgraph.yaml` | Subgraph manifest |
+| `schema.graphql` | GraphQL entity schema |
+| `networks.json` | Per-chain deployed addresses and start blocks |
+| `src/mappings/{Contract}.ts` | Compiled AssemblyScript handlers |
+| `package.json` | npm scripts: `codegen`, `build`, `deploy` |
+| `howto.md` | Step-by-step deployment guide to The Graph Studio |
+
+The Generate button is disabled while validation errors (red outlines) exist.
+
+---
+
+## Canvas Library
+
+Open with the **Library** button. Save, load, export (`.json`), and import canvas states.
+Use this to manage multiple subgraph designs or share a configuration with a team member.
+
+---
+
+## Example: TVL with history (Alchemix pattern)
+
+**Goal:** maintain a single running TVL balance, and save one history row per event that
+links back to the TVL record.
+
+**TVL aggregate:**
+
+1. Add Aggregate Entity → name `AlchemistTVL` → add field `netBalance` (BigInt).
+2. Add field `activity`, type `AlchemistTVLHistory`. Click the link icon → enter `tvl`
+   (creates `@derivedFrom(field: "tvl")`).
+3. In the **Trigger Events** checklist, tick `Deposit`.
+4. Wire `implicit-address` → `field-id`.
+5. Add Math (add) → wire `field-prev-netBalance` → left, `event-Deposit-amount` → right.
+6. Wire Math result → `field-in-netBalance`.
+
+**History entity:**
+
+1. Add Entity → name `AlchemistTVLHistory`.
+2. Add field `tvl`, type `AlchemistTVL` (real foreign key — do NOT click the link icon).
+3. Add field `netBalance` (BigInt).
+4. Wire `event-Deposit` (amber) → `evt`.
+5. Set ID strategy to `tx.hash + log index`.
+6. Wire `AlchemistTVL field-out-id` → `field-tvl`.
+7. Wire `event-Deposit-amount` → `field-netBalance`.
+
+After generating, query both the TVL and its history in one GraphQL call:
+
+```graphql
+{
+  alchemistTVL(id: "0x...") {
+    netBalance
+    activity { netBalance }
+  }
+}
+```
+
+---
+
+## API endpoints
+
+The FastAPI backend exposes these endpoints:
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/abi/parse` | Parse raw ABI JSON |
+| `POST` | `/api/abi/fetch` | Fetch ABI from Etherscan |
+| `GET` | `/api/config` | Load `visual-config.json` |
+| `POST` | `/api/config` | Save `visual-config.json` |
+| `POST` | `/api/validate` | Validate graph; returns `{issues, has_errors}` |
+| `POST` | `/api/generate` | Compile and write output files; returns `{files, dir}` |
+| `GET` | `/api/fs/browse` | List subdirectories at `?path=<path>` (defaults to home) |
+| `POST` | `/api/fs/mkdir` | Create a directory; body `{path}` |
+
+---
+
+## Running the backend separately (development)
+
+```bash
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+
+# Backend only (port 8000)
+pip install -e .
+uvicorn subgraph_wizard.server:app --port 8000 --reload
+
+# Frontend dev server (port 5173, proxies /api → :8000)
+cd frontend && npm install && npm run dev
+
+# Build frontend into the static bundle
+cd frontend && npm run build
+```
+
+---
+
+## Interactive / config-driven modes
+
+```bash
+# Guided text wizard
+subgraph-wizard
+
+# Config-driven (non-interactive / CI)
+subgraph-wizard --config subgraph-config.json --generate
+subgraph-wizard --config subgraph-config.json --generate --dry-run
+```
+
+These modes produce a complete subgraph project from a `subgraph-config.json` file using
+Jinja2 templates. They are separate from the visual editor and use their own data models.
+
+---
+
+## Environment variables
+
+Copy `.env.example` to `.env`. Never commit `.env`.
+
+| Variable | Purpose |
+|---|---|
+| `ETHERSCAN_API_KEY` | Etherscan API key (Ethereum mainnet) |
+| `OPTIMISM_ETHERSCAN_API_KEY` | Optimism explorer API key |
+| `ARBITRUM_ETHERSCAN_API_KEY` | Arbiscan API key |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default `INFO`) |
+| `VITE_API_PORT` | Override FastAPI port during frontend dev (default `8000`) |
+
+---
+
+## Tests
+
+```bash
+pytest          # 147 tests
+pytest -v
+pytest tests/test_validator.py
+pytest tests/test_server.py
+```
+
+---
+
+## Contributing
+
+- Add new networks: edit `src/subgraph_wizard/networks.py`
+- Add new ABI ingestion methods: extend `src/subgraph_wizard/abi/`
+- Add new node types: add a React component in `frontend/src/nodes/`, update the compiler
+  and validator in `src/subgraph_wizard/generate/`
+- Add new mapping styles (CLI mode): extend `src/subgraph_wizard/generate/mappings_*.py`
