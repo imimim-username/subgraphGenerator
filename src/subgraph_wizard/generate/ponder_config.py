@@ -568,8 +568,17 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
 
     lines += [
         "",
-        "# Uncomment to use a PostgreSQL database instead of the embedded PGlite.",
+        "# ── Database (production / ponder start) ────────────────────────────────",
+        "#",
+        "# ponder dev  → uses embedded PGlite; no database vars needed.",
+        "# ponder start → requires a real PostgreSQL database AND a schema name.",
+        "#",
+        "# Uncomment and fill in both lines to use PostgreSQL:",
         "# DATABASE_URL=postgresql://user:password@localhost:5432/ponder",
+        "# DATABASE_SCHEMA=public",
+        "#",
+        "# DATABASE_SCHEMA must be unique per running Ponder instance.",
+        "# Two instances cannot share the same schema at the same time.",
         "",
     ]
     return "\n".join(lines)
@@ -621,30 +630,75 @@ def render_ponder_howto(
     rpc_lines = "\n".join(f"  {v}=<your-rpc-url>   # {s}" for v, s in zip(rpc_vars, seen_slugs))
     if use_postgres:
         step2 = f"""\
-## Step 2 — Configure environment variables
+## Step 2 — Set up PostgreSQL and configure environment variables
 
-Copy `.env.example` to `.env.local`:
+This project was generated with PostgreSQL as the database backend.
+You need a running Postgres server **before** starting the indexer.
+
+### 2a — Install / start PostgreSQL
+
+**macOS (Homebrew):**
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt update && sudo apt install -y postgresql
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+**Managed cloud options (no local install needed):**
+- [Supabase](https://supabase.com) — free tier available
+- [Neon](https://neon.tech) — free tier, serverless Postgres
+- [Railway](https://railway.app) — free tier, easy deploys
+
+### 2b — Create the database
+
+```bash
+# Connect to the local Postgres server as the superuser
+psql -U postgres
+
+# Inside psql, create a database and a dedicated user (replace passwords):
+CREATE DATABASE ponder;
+CREATE USER ponder_user WITH PASSWORD 'yourpassword';
+GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;
+\\q
+```
+
+Your `DATABASE_URL` will be:
+```
+postgresql://ponder_user:yourpassword@localhost:5432/ponder
+```
+
+### 2c — Create `.env.local`
 
 ```bash
 cd "{output_dir}"
 cp .env.example .env.local
 ```
 
-Then fill in **all** of the following in `.env.local`:
+Edit `.env.local` and fill in **all** of the following:
 
 ```
 # RPC endpoints (one per chain)
 {rpc_lines}
 
-# PostgreSQL connection string (required — you chose postgres as your database)
-DATABASE_URL=postgresql://user:password@localhost:5432/ponder
+# PostgreSQL connection string
+DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder
+
+# Schema to use inside the database.
+# Must be unique per running Ponder instance (two instances cannot share
+# the same schema at the same time).
+DATABASE_SCHEMA=public
 ```
 
-> **PostgreSQL required.** This project was generated with `database: postgres`.
-> You need a running Postgres instance before starting the indexer.
-> On macOS: `brew install postgresql && brew services start postgresql`
-> On Linux: `sudo apt install postgresql && sudo systemctl start postgresql`
-> Or use a managed service: Supabase, Railway, Neon, etc.
+> **`DATABASE_SCHEMA` is required for `ponder start`.**
+> It tells Ponder which Postgres schema (namespace) to write tables into.
+> `public` is a safe default for a single instance.
+> For multiple environments (staging/prod), use different schema names.
 
 > **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename."""
     else:
@@ -664,14 +718,16 @@ Edit `.env.local` and set the following variable(s):
 {rpc_lines}
 ```
 
-You can get a free endpoint from [Alchemy](https://alchemy.com) or [Infura](https://infura.io).
+You can get a free RPC endpoint from [Alchemy](https://alchemy.com) or [Infura](https://infura.io).
 
 > **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename.
 
-> **Database:** This project uses PGlite (embedded Postgres — zero configuration,
-> data stored in `.ponder/pglite`).  No database setup required for development.
-> For production, switch to PostgreSQL by adding `database: {{ kind: "postgres" }}`
-> to `ponder.config.ts` and setting `DATABASE_URL` in your environment."""
+> **Database:** This project uses **PGlite** — an embedded Postgres database
+> that runs entirely in Node.js.  Zero configuration; data is stored in
+> `.ponder/pglite/`.  No separate database server is needed for development.
+
+> **For production (`ponder start`)**, PGlite is not supported.  You must switch
+> to PostgreSQL (see Step 6 — Production deployment)."""
 
     # ── Ordering note ────────────────────────────────────────────────────────
     ordering_note = ""
@@ -725,26 +781,68 @@ You can get a free endpoint from [Alchemy](https://alchemy.com) or [Infura](http
         prod_section = """\
 ## Step 6 — Production deployment
 
-Your project is already configured for PostgreSQL.  Make sure `DATABASE_URL`
-points to your production database, then run:
+Your project is already configured for PostgreSQL.
+
+Make sure the following environment variables are set (in `.env.local` or your
+hosting platform's secrets dashboard):
+
+```
+DATABASE_URL=postgresql://user:password@host:5432/ponder
+DATABASE_SCHEMA=public        # unique per running Ponder instance
+PONDER_RPC_URL_<chainId>=...  # one per chain
+```
+
+Then run:
 
 ```bash
 pnpm start
 ```
 
 You can deploy to Railway, Render, Fly.io, or any Node.js-capable host.
-Set all environment variables (`PONDER_RPC_URL_*` and `DATABASE_URL`) in the
-hosting platform's secrets/env dashboard."""
+Set all environment variables in the hosting platform's secrets/env dashboard.
+
+> **Schema conflicts:** If you run two instances pointing at the same database,
+> give each a different `DATABASE_SCHEMA` (e.g. `staging`, `prod`).
+> Two instances **cannot** share the same schema simultaneously."""
     else:
         prod_section = """\
 ## Step 6 — Production deployment
 
-PGlite is for development only.  Before deploying to production:
+PGlite is for **development only** — it does not support `ponder start`.
+Before deploying to production you must switch to PostgreSQL:
 
-1. Add `database: {{ kind: "postgres", connectionString: process.env.DATABASE_URL }}`
-   to `createConfig({{ ... }})` in `ponder.config.ts`.
-2. Set `DATABASE_URL` to your production Postgres connection string.
-3. Run `pnpm start`.
+### 6a — Add Postgres to `ponder.config.ts`
+
+In `ponder.config.ts`, add a `database` block inside `createConfig({{ ... }})`:
+
+```typescript
+export default createConfig({{
+  database: {{
+    kind: "postgres",
+    connectionString: process.env.DATABASE_URL,
+  }},
+  // ... rest of your config
+}});
+```
+
+### 6b — Set environment variables
+
+In `.env.local` (or your hosting platform's secrets dashboard), add:
+
+```
+DATABASE_URL=postgresql://user:password@host:5432/ponder
+DATABASE_SCHEMA=public
+```
+
+`DATABASE_SCHEMA` is **required** by `ponder start`.  It names the Postgres
+schema (namespace) where Ponder will create its tables.  `public` is a safe
+default for a single deployment; use different names for staging vs production.
+
+### 6c — Start
+
+```bash
+pnpm start
+```
 
 Popular hosting options: Railway, Render, Fly.io (all support Node.js + Postgres)."""
 
@@ -805,6 +903,9 @@ pnpm install
 
 ## Step 4 — Run the indexer (development mode)
 
+Use `pnpm dev` for local development.  **Do not use `pnpm start` yet** — that
+is for production and has extra requirements (see Step 6).
+
 ```bash
 pnpm dev
 ```
@@ -813,6 +914,12 @@ Ponder will:
 1. Sync historical events from the configured `startBlock` to the chain tip.
 2. Start a GraphQL API at <http://localhost:42069/graphql>.
 3. Hot-reload handlers when you edit `src/index.ts`.
+
+> **`pnpm dev` vs `pnpm start`:**
+> - `pnpm dev` — development mode; uses PGlite (no Postgres needed); `DATABASE_SCHEMA` not required.
+> - `pnpm start` — production mode; **requires** PostgreSQL (`DATABASE_URL`) and an
+>   explicit schema (`DATABASE_SCHEMA`).  Running `pnpm start` without these set will
+>   fail with *"Database schema required"*.
 
 ---
 
