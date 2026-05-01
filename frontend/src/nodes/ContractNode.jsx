@@ -333,10 +333,16 @@ export default function ContractNode({ id, data, selected }) {
                 className="sg-node__btn nodrag"
                 onClick={handleDetect}
                 disabled={detecting || !(address || '').trim().startsWith('0x')}
-                title="Auto-detect deployment block via RPC"
+                title={
+                  !(address || '').trim().startsWith('0x')
+                    ? 'Enter a 0x address above to detect deployment block'
+                    : detecting
+                    ? 'Detecting…'
+                    : `Detect deployment block on ${network || 'mainnet'} (tries Etherscan first, then public RPC)`
+                }
                 style={{ flexShrink: 0, padding: '3px 7px', display: 'flex', alignItems: 'center', gap: 3 }}
               >
-                <Search size={10} />
+                <Search size={10} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
                 {detecting ? '…' : 'Detect'}
               </button>
             </div>

@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronUp, Globe } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, Globe, Search } from 'lucide-react';
 
 // ── Known networks ────────────────────────────────────────────────────────────
 const KNOWN_NETWORKS = [
@@ -81,59 +81,128 @@ const INPUT_STYLE = {
   outline: 'none',
 };
 
-function InstanceRow({ inst, onChange, onRemove, canRemove }) {
+function InstanceRow({ inst, onChange, onRemove, canRemove, network }) {
+  const [detecting, setDetecting] = useState(false);
+  const [detectErr, setDetectErr] = useState(null);
+
+  const handleDetect = useCallback(async () => {
+    const addr = (inst.address || '').trim();
+    if (!addr.startsWith('0x')) {
+      setDetectErr('Enter a 0x address first');
+      return;
+    }
+    setDetecting(true);
+    setDetectErr(null);
+    try {
+      const net = network || 'mainnet';
+      const res = await fetch(
+        `/api/detect-start-block?address=${encodeURIComponent(addr)}&network=${encodeURIComponent(net)}`
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? `HTTP ${res.status}`);
+      }
+      const { block } = await res.json();
+      if (block === 0) {
+        setDetectErr('No contract found at this address on ' + net);
+      } else {
+        onChange('startBlock', String(block));
+        setDetectErr(null);
+      }
+    } catch (e) {
+      setDetectErr(String(e.message ?? e));
+    } finally {
+      setDetecting(false);
+    }
+  }, [inst.address, network, onChange]);
+
+  const canDetect = (inst.address || '').trim().startsWith('0x');
+
   return (
-    <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
-      <input
-        className="nodrag"
-        placeholder="label"
-        value={inst.label}
-        onChange={(e) => onChange('label', e.target.value)}
-        style={{ ...INPUT_STYLE, flex: '0 0 58px' }}
-      />
-      <input
-        className="nodrag"
-        placeholder="0x…"
-        value={inst.address}
-        onChange={(e) => onChange('address', e.target.value)}
-        style={{ ...INPUT_STYLE, flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
-      />
-      <input
-        className="nodrag"
-        placeholder="start"
-        value={inst.startBlock}
-        onChange={(e) => onChange('startBlock', e.target.value)}
-        style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
-      />
-      <input
-        className="nodrag"
-        placeholder="end"
-        value={inst.endBlock ?? ''}
-        onChange={(e) => onChange('endBlock', e.target.value)}
-        style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
-      />
-      {canRemove && (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <input
+          className="nodrag"
+          placeholder="label"
+          value={inst.label}
+          onChange={(e) => onChange('label', e.target.value)}
+          style={{ ...INPUT_STYLE, flex: '0 0 55px' }}
+        />
+        <input
+          className="nodrag"
+          placeholder="0x…"
+          value={inst.address}
+          onChange={(e) => onChange('address', e.target.value)}
+          style={{ ...INPUT_STYLE, flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
+        />
+        <input
+          className="nodrag"
+          placeholder="start"
+          value={inst.startBlock}
+          onChange={(e) => onChange('startBlock', e.target.value)}
+          style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
+        />
+        <input
+          className="nodrag"
+          placeholder="end"
+          value={inst.endBlock ?? ''}
+          onChange={(e) => onChange('endBlock', e.target.value)}
+          style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
+        />
         <button
-          onClick={onRemove}
+          onClick={handleDetect}
+          disabled={!canDetect || detecting}
+          title={
+            !canDetect
+              ? 'Enter a 0x address to detect deployment block'
+              : detecting
+              ? 'Detecting…'
+              : `Detect deployment block on ${network || 'mainnet'}`
+          }
           style={{
             background: 'none',
-            border: 'none',
-            color: '#f87171',
-            cursor: 'pointer',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            color: canDetect && !detecting ? 'var(--accent-light)' : 'var(--text-muted)',
+            cursor: canDetect && !detecting ? 'pointer' : 'not-allowed',
             padding: '2px 4px',
             display: 'flex',
             alignItems: 'center',
+            opacity: canDetect ? 1 : 0.4,
+            flexShrink: 0,
           }}
-          title="Remove instance"
         >
-          <Trash2 size={11} />
+          <Search size={10} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
         </button>
+        {canRemove && (
+          <button
+            onClick={onRemove}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#f87171',
+              cursor: 'pointer',
+              padding: '2px 4px',
+              display: 'flex',
+              alignItems: 'center',
+              flexShrink: 0,
+            }}
+            title="Remove instance"
+          >
+            <Trash2 size={11} />
+          </button>
+        )}
+      </div>
+      {detectErr && (
+        <div style={{ fontSize: 10, color: '#f87171', marginTop: 2, paddingLeft: 2 }}>
+          {detectErr}
+        </div>
       )}
     </div>
   );
 }
 
-function ContractSection({ contractName, contractData, onUpdate }) {
+function ContractSection({ contractName, contractData, onUpdate, network }) {
   const instances = contractData?.instances ?? [];
 
   const updateInstance = (idx, field, value) => {
@@ -180,13 +249,15 @@ function ContractSection({ contractName, contractData, onUpdate }) {
       {/* Column headers */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 3 }}>
         {[
-          { key: 'label', flex: '0 0 58px' },
+          { key: 'label', flex: '0 0 55px' },
           { key: 'address', flex: 1 },
           { key: 'start', flex: '0 0 50px' },
           { key: 'end', flex: '0 0 50px' },
-        ].map(({ key, flex }) => (
+          { key: '⚡', flex: '0 0 22px', title: 'Detect start block' },
+        ].map(({ key, flex, title: colTitle }) => (
           <div
             key={key}
+            title={colTitle}
             style={{
               fontSize: 9,
               color: 'var(--text-muted)',
@@ -204,6 +275,7 @@ function ContractSection({ contractName, contractData, onUpdate }) {
         <InstanceRow
           key={idx}
           inst={inst}
+          network={network}
           onChange={(field, val) => updateInstance(idx, field, val)}
           onRemove={() => removeInstance(idx)}
           canRemove={instances.length > 1}
@@ -299,6 +371,7 @@ function NetworkSection({ entry, idx, contractNames, onUpdate, onRemove }) {
                 contractName={name}
                 contractData={entry.contracts[name]}
                 onUpdate={(patch) => updateContract(name, patch)}
+                network={entry.network}
               />
             ))
           )}

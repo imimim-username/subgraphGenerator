@@ -481,6 +481,46 @@ def _detect_start_block_sync(address: str, network: str) -> int:
     return lo
 
 
+def _detect_start_block_with_fallback(address: str, network: str) -> int:
+    """Detect deployment block with a multi-step fallback strategy.
+
+    1. Try Etherscan ``getcontractcreation`` API (fast, accurate, needs API key)
+       → ``eth_getTransactionByHash`` → ``txlistinternal`` / ``txlist`` chain
+    2. Fall back to public-RPC binary search via ``eth_getCode`` (slow but
+       always available, no API key required)
+
+    Returns the deployment block number, or 0 if the contract cannot be found.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Step 1: Try the rich Etherscan-based detector if available
+    try:
+        from subgraph_wizard.abi.etherscan import get_contract_deployment_block
+
+        result = get_contract_deployment_block(network, address)
+        if result is not None and result > 0:
+            logger.info(
+                "Etherscan detection succeeded for %s on %s → block %s",
+                address,
+                network,
+                result,
+            )
+            return result
+    except Exception as exc:
+        logger.warning(
+            "Etherscan detection failed for %s on %s: %s — falling back to RPC",
+            address,
+            network,
+            exc,
+        )
+
+    # Step 2: Public-RPC binary search (always works, slower)
+    logger.info("Falling back to RPC binary search for %s on %s", address, network)
+    return _detect_start_block_sync(address, network)
+
+
 @app.get("/api/detect-start-block")
 async def detect_start_block(
     address: str = Query(..., description="Contract address (0x…)"),
@@ -488,11 +528,17 @@ async def detect_start_block(
 ) -> JSONResponse:
     """Detect the block number at which a contract was first deployed.
 
-    Uses binary search over ``eth_getCode`` on a public RPC endpoint.
-    Takes roughly 15-25 network round-trips (about 5-15 seconds).
+    Detection strategy (in order):
+
+    1. **Etherscan** ``getcontractcreation`` → tx receipt lookup (fast, ~1 s,
+       requires ``ETHERSCAN_API_KEY`` env var).
+    2. **Public-RPC binary search** via ``eth_getCode`` (no API key needed,
+       ~15-25 round-trips, 5-15 s).
 
     Returns:
-      {"block": <int>, "address": "0x…", "network": "mainnet"}
+      ``{"block": <int>, "address": "0x…", "network": "mainnet"}``
+
+    ``block`` is 0 when no contract code is found at the given address.
     """
     import asyncio
 
@@ -500,7 +546,9 @@ async def detect_start_block(
         raise HTTPException(status_code=400, detail="address must start with 0x")
 
     try:
-        block = await asyncio.to_thread(_detect_start_block_sync, address, network)
+        block = await asyncio.to_thread(
+            _detect_start_block_with_fallback, address, network
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"RPC error: {exc}")
 

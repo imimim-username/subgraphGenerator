@@ -135,6 +135,12 @@ body {
 }
 .sg-node__instance-row input:focus { border-color: var(--accent-light); }
 
+/* ── Spin animation (used by detect buttons during loading) ── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* ── Validation outlines (applied via className on React Flow nodes) ── */
 .react-flow__node.has-validation-error {
   outline: 2px solid #ef4444 !important;
