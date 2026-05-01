@@ -609,17 +609,17 @@ class TestImplicitInstanceAddress:
 # ── Auto chain field ───────────────────────────────────────────────────────────
 
 class TestAutoChainField:
-    """The compiler must inject `chain: context.network.name` automatically."""
+    """The compiler must inject `chain: context.chain.name` automatically."""
 
     def test_chain_injected_into_regular_entity(self):
-        """Every regular entity insert must include chain: context.network.name."""
+        """Every regular entity insert must include chain: context.chain.name."""
         nodes = [
             _contract("c1", "Token", events=[_event("Transfer")]),
             _entity("e1", "Transfer"),
         ]
         edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "chain: context.network.name," in src
+        assert "chain: context.chain.name," in src
 
     def test_chain_injected_into_aggregate_entity(self):
         """Aggregate entity inserts and updates must also include chain."""
@@ -633,7 +633,7 @@ class TestAutoChainField:
             agg,
         ]
         src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
-        assert "chain: context.network.name" in src
+        assert "chain: context.chain.name" in src
 
     def test_chain_not_duplicated_when_user_has_chain_field(self):
         """If the entity already has a field named 'chain', don't inject a second one."""
@@ -648,4 +648,4 @@ class TestAutoChainField:
         edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         # Should appear at most once in the values block (not duplicated)
-        assert src.count("chain: context.network.name,") <= 1
+        assert src.count("chain: context.chain.name,") <= 1

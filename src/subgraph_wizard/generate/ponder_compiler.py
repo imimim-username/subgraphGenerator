@@ -426,7 +426,7 @@ class PonderCompiler:
         user_field_names = {f.get("name", "") for f in fields}
         values_lines: list[str] = [f"  id: {id_expr},"]
         if "chain" not in user_field_names:
-            values_lines.append("  chain: context.network.name,")
+            values_lines.append("  chain: context.chain.name,")
 
         for fld in fields:
             fname = fld.get("name", "")
@@ -567,7 +567,7 @@ class PonderCompiler:
         agg_user_field_names = {f.get("name", "") for f in fields}
         initial_values: list[str] = [f"id: {id_expr}"]
         if "chain" not in agg_user_field_names:
-            initial_values.append("chain: context.network.name")
+            initial_values.append("chain: context.chain.name")
         for fld in non_id_fields:
             fname = fld["name"]
             field_type = fld.get("type", "BigInt")
@@ -595,7 +595,7 @@ class PonderCompiler:
         # ── Build .onConflictDoUpdate((row) => ({...})) ──
         update_values: list[str] = []
         if "chain" not in agg_user_field_names:
-            update_values.append("chain: context.network.name")
+            update_values.append("chain: context.chain.name")
         for fld in non_id_fields:
             fname = fld["name"]
             in_handle = f"field-in-{fname}"
