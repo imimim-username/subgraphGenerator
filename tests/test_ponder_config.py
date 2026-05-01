@@ -739,3 +739,54 @@ class TestMixedStartBlock:
         out = render_ponder_config(cfg)
         assert "startBlock" not in out
 
+
+
+# ── Auto chain column in schema ────────────────────────────────────────────────
+
+class TestAutoChainColumn:
+    """render_ponder_schema must inject a `chain` column into every entity table."""
+
+    def _cfg(self, nodes, edges=None):
+        return {"nodes": nodes, "edges": edges or []}
+
+    def _entity(self, node_id, name, fields=None):
+        return {
+            "id": node_id,
+            "type": "entity",
+            "position": {},
+            "data": {"name": name, "fields": fields or [{"name": "id", "type": "ID", "required": True}]},
+        }
+
+    def test_chain_column_added_to_entity(self):
+        from subgraph_wizard.generate.ponder_schema import render_ponder_schema
+        cfg = self._cfg([self._entity("e1", "Transfer")])
+        schema = render_ponder_schema(cfg)
+        assert "chain: t.text().notNull()," in schema
+
+    def test_chain_column_is_after_id(self):
+        from subgraph_wizard.generate.ponder_schema import render_ponder_schema
+        cfg = self._cfg([self._entity("e1", "Transfer")])
+        schema = render_ponder_schema(cfg)
+        id_pos = schema.index("id: t.text().primaryKey()")
+        chain_pos = schema.index("chain: t.text().notNull(),")
+        assert chain_pos > id_pos
+
+    def test_chain_column_not_duplicated_when_user_has_chain(self):
+        from subgraph_wizard.generate.ponder_schema import render_ponder_schema
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "chain", "type": "String"},
+        ]
+        cfg = self._cfg([self._entity("e1", "Transfer", fields=fields)])
+        schema = render_ponder_schema(cfg)
+        # Only one chain column entry
+        assert schema.count("chain:") == 1
+
+    def test_chain_column_added_to_all_entities(self):
+        from subgraph_wizard.generate.ponder_schema import render_ponder_schema
+        cfg = self._cfg([
+            self._entity("e1", "Transfer"),
+            self._entity("e2", "Approval"),
+        ])
+        schema = render_ponder_schema(cfg)
+        assert schema.count("chain: t.text().notNull(),") == 2

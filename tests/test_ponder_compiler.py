@@ -604,3 +604,48 @@ class TestImplicitInstanceAddress:
     def test_same_result_as_implicit_address(self):
         """implicit-instance-address and implicit-address should both resolve to event.log.address."""
         assert _event_param_expr_ts("implicit-address") == _event_param_expr_ts("implicit-instance-address")
+
+
+# ── Auto chain field ───────────────────────────────────────────────────────────
+
+class TestAutoChainField:
+    """The compiler must inject `chain: context.network.name` automatically."""
+
+    def test_chain_injected_into_regular_entity(self):
+        """Every regular entity insert must include chain: context.network.name."""
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Transfer"),
+        ]
+        edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "chain: context.network.name," in src
+
+    def test_chain_injected_into_aggregate_entity(self):
+        """Aggregate entity inserts and updates must also include chain."""
+        agg = _agg_entity("a1", "Counter", fields=[
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "count", "type": "BigInt"},
+        ])
+        agg["data"]["triggerEvents"] = [{"contractId": "c1", "eventName": "Transfer"}]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            agg,
+        ]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert "chain: context.network.name" in src
+
+    def test_chain_not_duplicated_when_user_has_chain_field(self):
+        """If the entity already has a field named 'chain', don't inject a second one."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "chain", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Transfer", fields=fields),
+        ]
+        edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Should appear at most once in the values block (not duplicated)
+        assert src.count("chain: context.network.name,") <= 1

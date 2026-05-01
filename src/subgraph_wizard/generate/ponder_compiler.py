@@ -421,7 +421,12 @@ class PonderCompiler:
             extra_abi_imports.update(id_abis)
 
         # ── Build values object ──
+        # `chain` is auto-injected right after `id` (unless the user already
+        # has a field named "chain" in their entity definition).
+        user_field_names = {f.get("name", "") for f in fields}
         values_lines: list[str] = [f"  id: {id_expr},"]
+        if "chain" not in user_field_names:
+            values_lines.append("  chain: context.network.name,")
 
         for fld in fields:
             fname = fld.get("name", "")
@@ -558,7 +563,11 @@ class PonderCompiler:
             extra_abi_imports.update(id_abis)
 
         # ── Build .values({}) (initial values for new records) ──
+        # `chain` is auto-injected unless the user already has a field named "chain".
+        agg_user_field_names = {f.get("name", "") for f in fields}
         initial_values: list[str] = [f"id: {id_expr}"]
+        if "chain" not in agg_user_field_names:
+            initial_values.append("chain: context.network.name")
         for fld in non_id_fields:
             fname = fld["name"]
             field_type = fld.get("type", "BigInt")
@@ -585,6 +594,8 @@ class PonderCompiler:
 
         # ── Build .onConflictDoUpdate((row) => ({...})) ──
         update_values: list[str] = []
+        if "chain" not in agg_user_field_names:
+            update_values.append("chain: context.network.name")
         for fld in non_id_fields:
             fname = fld["name"]
             in_handle = f"field-in-{fname}"

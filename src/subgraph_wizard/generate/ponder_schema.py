@@ -205,6 +205,12 @@ def render_ponder_schema(visual_config: dict[str, Any]) -> str:
         table_lines.append(f'export const {var} = onchainTable("{var}", (t) => ({{')
 
         seen_fields: set[str] = set()
+        user_field_names: set[str] = set()
+        for field in data.get("fields", []):
+            fname = field.get("name", "").strip()
+            if fname:
+                user_field_names.add(fname)
+
         for field in data.get("fields", []):
             fname = field.get("name", "").strip()
             if not fname or fname in seen_fields:
@@ -218,6 +224,12 @@ def render_ponder_schema(visual_config: dict[str, Any]) -> str:
             is_id = fname == "id"
             col = _column_expr(field, is_id)
             table_lines.append(f"  {fname}: {col},")
+
+            # Inject `chain` immediately after `id` (unless the user already
+            # defined a field named "chain").
+            if is_id and "chain" not in user_field_names:
+                table_lines.append("  chain: t.text().notNull(),")
+                seen_fields.add("chain")
 
         table_lines.append("}));")
         table_lines.append("")
