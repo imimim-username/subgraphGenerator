@@ -530,6 +530,14 @@ class TestRenderPonderApiIndex:
         out = render_ponder_api_index()
         assert "Hono()" in out or "new Hono" in out
 
+    def test_root_redirects_to_graphql(self):
+        """GET / must redirect to /graphql so the playground is one click away."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        # Must register a GET handler for "/" that redirects to "/graphql"
+        assert 'app.get("/")' in out or 'app.get("/",' in out
+        assert 'redirect("/graphql")' in out or "redirect('/graphql')" in out
+
 
 # ── render_ponder_howto — .env.local ──────────────────────────────────────────
 

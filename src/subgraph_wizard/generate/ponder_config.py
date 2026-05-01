@@ -434,11 +434,15 @@ def render_ponder_api_index() -> str:
     return """\
 import { Hono } from "hono";
 
-// Add custom API endpoints below.
-// Ponder's built-in GraphQL API is available at /graphql regardless.
+// Ponder's built-in GraphQL API is always available at /graphql.
 // See: https://ponder.sh/docs/api-reference/ponder/api-endpoints
 
 const app = new Hono();
+
+// Redirect root to the GraphQL playground.
+app.get("/", (c) => c.redirect("/graphql"));
+
+// Add custom API endpoints below.
 
 export default app;
 """
