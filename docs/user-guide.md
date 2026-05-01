@@ -1,6 +1,9 @@
 # Subgraph Wizard – User Guide
 
-This guide explains how to use the Subgraph Wizard to create subgraph projects for The Graph.
+This guide explains how to use the Subgraph Wizard to create blockchain indexers.
+The tool supports two output modes: **The Graph** (AssemblyScript subgraphs) and
+**Ponder** (TypeScript indexers).  The canvas workflow is identical for both — switch
+the output mode toggle in the toolbar before clicking Generate.
 
 ---
 
@@ -352,6 +355,79 @@ This example shows how to use call handlers to track function calls in addition 
 1. Indexes all events from the `Token` contract
 2. Also indexes calls to `transfer` and `approve` functions
 3. Generates handlers for both events and function calls
+
+---
+
+## Ponder output mode
+
+Ponder produces a self-hosted TypeScript indexer that runs on Node.js and exposes a live
+GraphQL API. Use it when you want:
+
+- Full TypeScript control over handler logic.
+- Multi-chain indexing in a single process.
+- A real-time GraphQL API without deploying to The Graph.
+
+### Visual editor quick-start (Ponder)
+
+1. Open the canvas (`subgraph-wizard --ui`).
+2. Toggle the **Output mode** to **Ponder** in the top toolbar.
+3. Build your canvas exactly as you would for a subgraph (Contract → Entity / Aggregate Entity
+   nodes, Networks panel for addresses and start blocks).
+4. Click **Generate**. The modal shows a **Ponder Settings** section:
+   - **Database** — `PGlite` (zero-config, embedded) or `PostgreSQL` (production).
+   - **Ordering** — `multichain` (default), `omnichain`, or `experimental_isolated`.
+5. Choose an output directory and click **Generate**.
+
+### Generated files
+
+| File | Description |
+|---|---|
+| `ponder.config.ts` | Chain RPC config, contract addresses, and start blocks |
+| `ponder.schema.ts` | Ponder `onchainTable` definitions (one per entity node) |
+| `src/index.ts` | TypeScript event handlers compiled from your canvas |
+| `src/api/index.ts` | Hono HTTP app; mounts `/graphql` and `/` |
+| `ponder-env.d.ts` | Ponder environment typings |
+| `tsconfig.json` | TypeScript project config |
+| `package.json` | `pnpm dev`, `pnpm start`, `pnpm codegen` scripts |
+| `.env.example` | RPC URL placeholders (one per chain) |
+| `PONDER_HOWTO.md` | Step-by-step guide generated for your specific canvas |
+
+### Key behaviours
+
+**Auto `chain` field.** Every entity table gets a `chain text NOT NULL` column added
+automatically after `id`. Every insert sets it to `context.chain.name`. This means you
+can filter or group results by chain in GraphQL queries without any extra canvas wiring.
+
+**Multi-chain, one indexer.** All networks in the Networks panel are indexed concurrently
+inside one Ponder process and stored in the same database. The `chain` column keeps records
+from different networks distinct.
+
+**Suffix-retry inserts.** Ponder rejects duplicate primary keys. The generated handlers
+retry with a `-1`, `-2`, … suffix appended to the record ID until the insert succeeds,
+preventing silently dropped events.
+
+**GraphQL at `/graphql`.** Since Ponder 0.8 the GraphQL endpoint is not served
+automatically. The generated `src/api/index.ts` mounts it explicitly. Start the indexer
+with `pnpm dev` and open `http://localhost:42069/graphql` (or `/` for the GraphiQL
+playground).
+
+**startBlock auto-detection.** If a contract instance has no start block set (or 0),
+the generator queries Etherscan to find the deployment block automatically, provided
+`ETHERSCAN_API_KEY` is set in the environment. This mirrors the behaviour of the
+The Graph output mode.
+
+### Running the indexer
+
+```bash
+cd <output-directory>
+cp .env.example .env.local
+# Edit .env.local — set PONDER_RPC_URL_<chainId> for each chain
+pnpm install
+pnpm dev      # starts indexer + hot-reload; GraphQL at http://localhost:42069/graphql
+```
+
+See the generated `PONDER_HOWTO.md` for the complete walkthrough including production
+deployment.
 
 ---
 

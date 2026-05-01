@@ -1,12 +1,29 @@
 """Generate ponder.config.ts and supporting boilerplate files.
 
 Functions:
-  render_ponder_config    — ponder.config.ts (createConfig)
-  render_ponder_env_dts   — ponder-env.d.ts  (static boilerplate)
-  render_ponder_tsconfig  — tsconfig.json    (TypeScript config)
-  render_ponder_package_json — package.json  (dependencies)
-  render_ponder_env_example  — .env.example  (RPC URL hints)
-  render_ponder_howto     — PONDER_HOWTO.md  (quickstart guide)
+  render_ponder_config       — ponder.config.ts (createConfig)
+  render_ponder_env_dts      — ponder-env.d.ts  (static boilerplate)
+  render_ponder_api_index    — src/api/index.ts (Hono app; mounts /graphql)
+  render_ponder_tsconfig     — tsconfig.json    (TypeScript config)
+  render_ponder_package_json — package.json     (dependencies)
+  render_ponder_env_example  — .env.example     (RPC URL hints)
+  render_ponder_howto        — PONDER_HOWTO.md  (quickstart guide)
+
+Ponder-specific design notes
+-----------------------------
+* GraphQL endpoint (Ponder ≥ 0.8):  The ``/graphql`` route is no longer served
+  automatically.  ``render_ponder_api_index`` generates a Hono app that mounts
+  ``graphql({ db, schema })`` at both ``/graphql`` (API) and ``/`` (GraphiQL
+  playground).
+
+* Auto ``chain`` column:  ``ponder_schema.py`` appends a ``chain: t.text()``
+  column after ``id`` in every ``onchainTable``.  ``ponder_compiler.py`` then
+  sets ``chain: context.chain.name`` on every insert so data can be filtered by
+  source chain without any extra canvas wiring.
+
+* Suffix-retry inserts:  When a Ponder insert conflicts on the primary key the
+  compiler emits a retry loop that appends ``-1``, ``-2``, … until the insert
+  succeeds.  This prevents duplicate-key errors from silently dropping events.
 """
 
 from __future__ import annotations
@@ -682,6 +699,16 @@ You can get a free endpoint from [Alchemy](https://alchemy.com) or [Infura](http
 > state.  The handler has access to `context.db` but **not** `event` — any
 > generated code using `event.*` inside setup will need manual adjustment."""
 
+    # ── Auto-chain note ──────────────────────────────────────────────────────
+    # Mention the auto-injected chain column so users understand it's there.
+    chain_note = """\
+
+> **Auto `chain` field:** Every entity table has a `chain` column automatically
+> added by the generator (`chain: context.chain.name` on every insert).
+> You can filter or group your GraphQL queries by this field to separate data
+> from different networks.\
+"""
+
     # ── GraphQL example ──────────────────────────────────────────────────────
     # Use the first entity/aggregate node name for the example query, or fall
     # back to a generic placeholder.
@@ -801,10 +828,18 @@ Example:
   {example_table}(limit: 10) {{
     items {{
       id
+      chain
     }}
   }}
 }}
 ```
+
+{chain_note}
+
+> **Suffix-retry inserts:** If an entity with the same ID was already inserted,
+> the generated handler retries with `-1`, `-2`, … appended to the ID until the
+> insert succeeds.  This prevents duplicate-key errors from silently dropping
+> events.
 
 ---
 

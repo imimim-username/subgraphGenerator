@@ -257,6 +257,50 @@ See `tests/fixtures/advanced_config.json` for a complete example with templates 
 
 ---
 
+---
+
+## Visual Editor — Canvas Settings (`visual-config.json`)
+
+The visual editor saves canvas state to `visual-config.json` on the server.  In addition
+to the graph nodes and edges it includes a `ponder_settings` object that controls Ponder
+generation options.
+
+### `ponder_settings`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `database` | `"pglite"` \| `"postgres"` | `"pglite"` | Database backend. `pglite` is embedded and zero-config. `postgres` emits a `database: { kind: "postgres", connectionString: process.env.DATABASE_URL }` block in `ponder.config.ts`. |
+| `dbUrl` | `string` | `""` | PostgreSQL connection string (informational only — the generator always reads the value from `process.env.DATABASE_URL` at runtime). |
+| `ordering` | `"multichain"` \| `"omnichain"` \| `"experimental_isolated"` | `"multichain"` | Ponder event ordering mode. `multichain` (default) is omitted from `ponder.config.ts`; the others are emitted explicitly. |
+
+### Per-contract Ponder options
+
+These are stored on individual Contract nodes in the canvas (not in `ponder_settings`):
+
+| Node field | Type | Description |
+|---|---|---|
+| `endBlock` | `number \| ""` | Optional block at which to stop indexing. Written to `ponder.config.ts` when non-empty. |
+| `includeCallTraces` | `boolean` | Emit `includeCallTraces: true` in the contract config block. |
+| `includeTransactionReceipts` | `boolean` | Emit `includeTransactionReceipts: true` in the contract config block. |
+| `hasSetupHandler` | `boolean` | Generate a `ponder.on("ContractName:setup", ...)` handler in `src/index.ts`. |
+
+### Per-network advanced options
+
+Stored on each network entry in the Networks panel:
+
+| Field | Type | Description |
+|---|---|---|
+| `pollingInterval` | `number` | RPC polling interval in ms. Written to the chain config in `ponder.config.ts`. |
+| `maxBlockRange` | `number` | Maximum block range for `eth_getLogs`. Written to the chain config. |
+
+### Per-instance `endBlock`
+
+Each contract **instance** within a network entry can have an `endBlock` field in addition
+to `startBlock`. When set, it is written to the corresponding contract entry in
+`ponder.config.ts`.
+
+---
+
 ## See Also
 
 - [User Guide](user-guide.md) – How to use the wizard and create configs
