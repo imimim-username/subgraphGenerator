@@ -133,21 +133,21 @@ function InstanceRow({ inst, onChange, onRemove, canRemove, network }) {
           placeholder="0x…"
           value={inst.address}
           onChange={(e) => onChange('address', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
+          style={{ ...INPUT_STYLE, flex: 1, minWidth: 0, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
         />
         <input
           className="nodrag"
           placeholder="start"
           value={inst.startBlock}
           onChange={(e) => onChange('startBlock', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
+          style={{ ...INPUT_STYLE, flex: '0 0 44px' }}
         />
         <input
           className="nodrag"
           placeholder="end"
           value={inst.endBlock ?? ''}
           onChange={(e) => onChange('endBlock', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: '0 0 50px' }}
+          style={{ ...INPUT_STYLE, flex: '0 0 44px' }}
         />
         <button
           onClick={handleDetect}
@@ -160,19 +160,19 @@ function InstanceRow({ inst, onChange, onRemove, canRemove, network }) {
               : `Detect deployment block on ${network || 'mainnet'}`
           }
           style={{
-            background: 'none',
+            background: canDetect && !detecting ? 'rgba(124,58,237,0.15)' : 'none',
             border: '1px solid var(--border)',
             borderRadius: 4,
             color: canDetect && !detecting ? 'var(--accent-light)' : 'var(--text-muted)',
             cursor: canDetect && !detecting ? 'pointer' : 'not-allowed',
-            padding: '2px 4px',
+            padding: '2px 5px',
             display: 'flex',
             alignItems: 'center',
-            opacity: canDetect ? 1 : 0.4,
+            opacity: canDetect ? 1 : 0.35,
             flexShrink: 0,
           }}
         >
-          <Search size={10} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
+          <Search size={11} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
         </button>
         {canRemove && (
           <button
@@ -251,9 +251,9 @@ function ContractSection({ contractName, contractData, onUpdate, network }) {
         {[
           { key: 'label', flex: '0 0 55px' },
           { key: 'address', flex: 1 },
-          { key: 'start', flex: '0 0 50px' },
-          { key: 'end', flex: '0 0 50px' },
-          { key: '⚡', flex: '0 0 22px', title: 'Detect start block' },
+          { key: 'start', flex: '0 0 44px' },
+          { key: 'end', flex: '0 0 44px' },
+          { key: '⚡', flex: '0 0 23px', title: 'Detect start block' },
         ].map(({ key, flex, title: colTitle }) => (
           <div
             key={key}
