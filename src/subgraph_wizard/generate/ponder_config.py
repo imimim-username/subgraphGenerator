@@ -684,6 +684,16 @@ CREATE USER ponder WITH PASSWORD 'yourpassword';
 -- Give that user full access to the database
 GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder;
 
+-- Switch into the ponder database so the next GRANT applies there
+\\c ponder
+
+-- Grant schema-level CREATE privilege.
+-- Required on PostgreSQL 15+ — older versions allow this by default,
+-- but PG 15 revoked it for security reasons.  Without this, Ponder
+-- fails with "permission denied for schema public" when it tries to
+-- create its internal tables.
+GRANT ALL ON SCHEMA public TO ponder;
+
 -- Exit psql
 \\q
 ```
@@ -1084,6 +1094,14 @@ Example:
   ls -la .env.local
   cat .env.local   # verify DATABASE_URL and DATABASE_SCHEMA are present
   ```
+
+**`permission denied for schema public`**
+→ PostgreSQL 15+ revoked the default `CREATE` privilege on the `public` schema.
+  Run this once to grant it:
+  ```bash
+  sudo -u postgres psql -d ponder -c "GRANT ALL ON SCHEMA public TO ponder;"
+  ```
+  Then retry `pnpm start`.
 
 **`SyntaxError` in generated handler code**
 → Regenerate from the canvas (some transforms may need manual adjustment for
