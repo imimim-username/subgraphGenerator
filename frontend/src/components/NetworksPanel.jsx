@@ -119,61 +119,76 @@ function InstanceRow({ inst, onChange, onRemove, canRemove, network }) {
   const canDetect = (inst.address || '').trim().startsWith('0x');
 
   return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+    <div style={{ marginBottom: 8 }}>
+      {/* Row 1: label + address */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 3 }}>
         <input
           className="nodrag"
           placeholder="label"
           value={inst.label}
           onChange={(e) => onChange('label', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: '0 0 55px' }}
+          style={{ ...INPUT_STYLE, width: 70, flexShrink: 0 }}
         />
         <input
           className="nodrag"
-          placeholder="0x…"
+          placeholder="0x… address"
           value={inst.address}
           onChange={(e) => onChange('address', e.target.value)}
           style={{ ...INPUT_STYLE, flex: 1, minWidth: 0, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
         />
+      </div>
+      {/* Row 2: startBlock | endBlock | detect | trash */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', paddingLeft: 2 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>
+          start
+        </span>
         <input
           className="nodrag"
-          placeholder="start"
+          placeholder="block #"
           value={inst.startBlock}
           onChange={(e) => onChange('startBlock', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: '0 0 44px' }}
+          style={{ ...INPUT_STYLE, width: 80, flexShrink: 0 }}
         />
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>
+          end
+        </span>
         <input
           className="nodrag"
-          placeholder="end"
+          placeholder="block #"
           value={inst.endBlock ?? ''}
           onChange={(e) => onChange('endBlock', e.target.value)}
-          style={{ ...INPUT_STYLE, flex: '0 0 44px' }}
+          style={{ ...INPUT_STYLE, width: 80, flexShrink: 0 }}
         />
         <button
           onClick={handleDetect}
           disabled={!canDetect || detecting}
           title={
             !canDetect
-              ? 'Enter a 0x address to detect deployment block'
+              ? 'Enter a 0x address above to detect deployment block'
               : detecting
               ? 'Detecting…'
-              : `Detect deployment block on ${network || 'mainnet'}`
+              : `Auto-detect start block on ${network || 'mainnet'}`
           }
           style={{
-            background: canDetect && !detecting ? 'rgba(124,58,237,0.15)' : 'none',
-            border: '1px solid var(--border)',
+            background: canDetect && !detecting ? 'rgba(124,58,237,0.2)' : 'rgba(0,0,0,0.2)',
+            border: `1px solid ${canDetect && !detecting ? 'var(--accent)' : 'var(--border)'}`,
             borderRadius: 4,
             color: canDetect && !detecting ? 'var(--accent-light)' : 'var(--text-muted)',
             cursor: canDetect && !detecting ? 'pointer' : 'not-allowed',
-            padding: '2px 5px',
+            padding: '3px 8px',
             display: 'flex',
             alignItems: 'center',
-            opacity: canDetect ? 1 : 0.35,
+            gap: 4,
+            fontSize: 10,
+            fontWeight: 600,
+            opacity: canDetect ? 1 : 0.4,
             flexShrink: 0,
           }}
         >
-          <Search size={11} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
+          <Search size={10} style={{ animation: detecting ? 'spin 1s linear infinite' : 'none' }} />
+          {detecting ? 'detecting…' : 'detect'}
         </button>
+        <div style={{ flex: 1 }} />
         {canRemove && (
           <button
             onClick={onRemove}
@@ -194,7 +209,7 @@ function InstanceRow({ inst, onChange, onRemove, canRemove, network }) {
         )}
       </div>
       {detectErr && (
-        <div style={{ fontSize: 10, color: '#f87171', marginTop: 2, paddingLeft: 2 }}>
+        <div style={{ fontSize: 10, color: '#f87171', marginTop: 3, paddingLeft: 2 }}>
           {detectErr}
         </div>
       )}
@@ -244,31 +259,6 @@ function ContractSection({ contractName, contractData, onUpdate, network }) {
         >
           <Plus size={9} /> instance
         </button>
-      </div>
-
-      {/* Column headers */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 3 }}>
-        {[
-          { key: 'label', flex: '0 0 55px' },
-          { key: 'address', flex: 1 },
-          { key: 'start', flex: '0 0 44px' },
-          { key: 'end', flex: '0 0 44px' },
-          { key: '⚡', flex: '0 0 23px', title: 'Detect start block' },
-        ].map(({ key, flex, title: colTitle }) => (
-          <div
-            key={key}
-            title={colTitle}
-            style={{
-              fontSize: 9,
-              color: 'var(--text-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
-              flex,
-            }}
-          >
-            {key}
-          </div>
-        ))}
       </div>
 
       {instances.map((inst, idx) => (
@@ -471,7 +461,7 @@ export default function NetworksPanel({ networks, onChange, contractNames = [], 
         top: 0,
         right: 0,
         bottom: 0,
-        width: 360,
+        width: 480,
         background: '#0f172a',
         borderLeft: '1px solid var(--border)',
         display: 'flex',
