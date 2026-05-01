@@ -574,7 +574,9 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
         "# ponder start → requires a real PostgreSQL database AND a schema name.",
         "#",
         "# Uncomment and fill in both lines to use PostgreSQL:",
-        "# DATABASE_URL=postgresql://user:password@localhost:5432/ponder",
+        "# The ?sslmode=disable prevents 'Connection terminated unexpectedly' on local Postgres.",
+        "# Remove it (or use ?sslmode=require) for managed cloud databases.",
+        "# DATABASE_URL=postgresql://user:password@localhost:5432/ponder?sslmode=disable",
         "# DATABASE_SCHEMA=public",
         "#",
         "# DATABASE_SCHEMA must be unique per running Ponder instance.",
@@ -692,7 +694,39 @@ Your `DATABASE_URL` will be (note `localhost` — this forces a TCP connection
 which uses password authentication, bypassing the peer auth restriction):
 
 ```
-postgresql://ponder_user:yourpassword@localhost:5432/ponder
+postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
+```
+
+> **Why `?sslmode=disable`?** The Node.js PostgreSQL driver tries to negotiate
+> an SSL/TLS connection by default.  Local PostgreSQL servers typically have
+> self-signed certificates that the driver rejects, causing a
+> *"Connection terminated unexpectedly"* error.  Disabling SSL for local
+> connections is safe and avoids the issue entirely.
+
+### 2c — Verify the connection before continuing
+
+Test that you can actually connect with the new user before setting up `.env.local`:
+
+```bash
+psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable"
+```
+
+You should see a prompt like `ponder=>`.  Type `\\q` to exit.
+
+If you get **"Connection refused"** → PostgreSQL is not running.  Start it:
+```bash
+sudo systemctl start postgresql
+```
+
+If you get **"password authentication failed"** → the password in the URL doesn't
+match what you used in `CREATE USER`.  Re-run:
+```bash
+sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'yournewpassword';"
+```
+
+If you get **"database does not exist"** → the database wasn't created.  Re-run:
+```bash
+sudo -u postgres psql -c "CREATE DATABASE ponder;" -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;"
 ```
 
 ### 2c — Create `.env.local`
@@ -709,7 +743,9 @@ Edit `.env.local` and fill in **all** of the following:
 {rpc_lines}
 
 # PostgreSQL connection string
-DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder
+# The ?sslmode=disable is important for local Postgres — without it the Node.js
+# driver tries to negotiate SSL and gets "Connection terminated unexpectedly".
+DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
 
 # Schema to use inside the database.
 # Must be unique per running Ponder instance (two instances cannot share
@@ -809,10 +845,13 @@ Make sure the following environment variables are set (in `.env.local` or your
 hosting platform's secrets dashboard):
 
 ```
-DATABASE_URL=postgresql://user:password@host:5432/ponder
+DATABASE_URL=postgresql://user:password@host:5432/ponder?sslmode=disable
 DATABASE_SCHEMA=public        # unique per running Ponder instance
 PONDER_RPC_URL_<chainId>=...  # one per chain
 ```
+
+> **Managed Postgres (Supabase, Neon, Railway, etc.):** These services use SSL.
+> Omit `?sslmode=disable` or use `?sslmode=require` instead.
 
 Then run:
 
@@ -852,9 +891,13 @@ export default createConfig({{
 In `.env.local` (or your hosting platform's secrets dashboard), add:
 
 ```
-DATABASE_URL=postgresql://user:password@host:5432/ponder
+DATABASE_URL=postgresql://user:password@host:5432/ponder?sslmode=disable
 DATABASE_SCHEMA=public
 ```
+
+> **Cloud Postgres (Supabase, Neon, Railway…):** Use `?sslmode=require` instead
+> of `?sslmode=disable`.  Local Postgres needs `disable` to avoid the
+> *"Connection terminated unexpectedly"* SSL handshake error.
 
 `DATABASE_SCHEMA` is **required** by `ponder start`.  It names the Postgres
 schema (namespace) where Ponder will create its tables.  `public` is a safe
@@ -994,8 +1037,24 @@ Example:
   {", ".join(f"`{v}`" for v in rpc_vars)}
 
 **`Error: DATABASE_URL is not set`**{' (only relevant if you switch to postgres)' if not use_postgres else ''}
-→ Set `DATABASE_URL` in your `.env` file (or your deployment platform's
+→ Set `DATABASE_URL` in your `.env.local` file (or your deployment platform's
   environment variable dashboard).
+
+**`Connection terminated unexpectedly`** (repeats several times then exits)
+→ The Node.js PostgreSQL driver is being rejected during the SSL handshake.
+  Add `?sslmode=disable` to the end of your `DATABASE_URL`:
+  ```
+  DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
+  ```
+  Also check that PostgreSQL is actually running:
+  ```bash
+  sudo systemctl status postgresql
+  sudo systemctl start postgresql   # if it shows "inactive"
+  ```
+  Then verify the credentials work:
+  ```bash
+  psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable"
+  ```
 
 **`SyntaxError` in generated handler code**
 → Regenerate from the canvas (some transforms may need manual adjustment for
