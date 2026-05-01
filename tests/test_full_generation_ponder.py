@@ -227,7 +227,9 @@ class TestSimpleERC20Transfer:
         assert "Number(event.block.timestamp)" in outputs["src/index.ts"]
 
     def test_handler_uses_event_id_for_entity_id(self, outputs):
-        assert "id: event.id" in outputs["src/index.ts"]
+        # Suffix-retry loop: raw id expr goes into __baseId; values() uses __id
+        assert "__baseId = event.id" in outputs["src/index.ts"]
+        assert "id: __id," in outputs["src/index.ts"]
 
     # ABI file
     def test_abi_ts_file_generated(self, outputs):
@@ -391,11 +393,13 @@ class TestSetupAndRegularEvent:
 
     def test_setup_entity_id_is_initial(self, cfg):
         src = compile_ponder(cfg)["src/index.ts"]
-        assert 'id: "initial"' in src
+        # Suffix-retry loop: base id goes into __baseId
+        assert '__baseId = "initial"' in src
 
     def test_transfer_entity_id_is_event_id(self, cfg):
         src = compile_ponder(cfg)["src/index.ts"]
-        assert "id: event.id" in src
+        # Suffix-retry loop: raw id expr goes into __baseId
+        assert "__baseId = event.id" in src
 
     def test_both_entities_in_schema(self, cfg):
         schema = render_ponder_schema(cfg)

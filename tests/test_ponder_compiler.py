@@ -145,7 +145,10 @@ class TestEntityInsert:
         ]
         edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "id: event.id" in src
+        # With the suffix-retry loop, the base ID is stored in __baseId; the
+        # .values() call uses __id (the loop variable) rather than the raw expr.
+        assert "__baseId = event.id" in src
+        assert "id: __id," in src
 
     def test_event_param_wired_to_field(self):
         fields = [
@@ -195,6 +198,89 @@ class TestEntityInsert:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "event.transaction.hash" in src
 
+    def test_suffix_retry_loop_emitted(self):
+        """Regular entity inserts must use a suffix-retry loop so that multiple events
+        in the same block producing the same base ID each get a unique row
+        (e.g. id_2, id_3) rather than crashing with UniqueConstraintError or silently
+        overwriting an earlier record.
+        """
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "total", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "TotalSupply", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "e1", "field-total"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Retry loop markers
+        assert "__baseId" in src
+        assert "for (let __n = 1" in src
+        assert "__n === 1 ? __baseId" in src
+        assert "UniqueConstraintError" in src
+
+    def test_suffix_retry_uses_id_loop_var(self):
+        """The .values({}) call inside the retry loop must reference __id, not the raw expression."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "amount", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snapshot", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "e1", "field-amount"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # id inside .values() must be __id (the loop variable), not the raw expression
+        assert "id: __id," in src
+
+    def test_suffix_retry_still_emitted_for_id_only_entity(self):
+        """Even an entity with only an id field uses the retry loop (no conflict handler needed
+        since there are no other fields, but the loop wrapper is still there for consistency)."""
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Seen", fields=[{"name": "id", "type": "ID", "required": True}]),
+        ]
+        edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "__baseId" in src
+        assert "UniqueConstraintError" in src
+        # onConflict helpers no longer emitted for regular entities
+        assert "onConflictDoUpdate" not in src
+        assert "onConflictDoNothing" not in src
+
+    def test_no_unique_constraint_error_possible_with_block_level_id(self):
+        """Regression: block-level IDs (blockNumber/timestamp) must not crash on second
+        event in same block. The suffix-retry loop handles this by appending _2, _3, …"""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "myt", "type": "String"},
+            {"name": "totalAssets", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "MYT", events=[_event("IncreaseAbsoluteCap")]),
+            _entity("e1", "TotalAssetsAndSupply", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-IncreaseAbsoluteCap", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "e1", "field-myt"),
+            _edge("ed3", "c1", "implicit-block-timestamp", "e1", "field-totalAssets"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Suffix retry must be present
+        assert "for (let __n = 1" in src
+        assert "__n === 1 ? __baseId" in src
+        assert "UniqueConstraintError" in src
+        # No upsert helpers — we preserve all records
+        assert "onConflictDoUpdate" not in src
+
 
 # ── Setup handler ─────────────────────────────────────────────────────────────
 
@@ -238,7 +324,9 @@ class TestSetupHandler:
         ]
         edges = [_edge("ed1", "c1", "event-setup", "e1", "trigger")]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert 'id: "initial"' in src
+        # With the suffix-retry loop the base ID goes into __baseId
+        assert '__baseId = "initial"' in src
+        assert "id: __id," in src
         assert "id: event.id" not in src
 
     def test_setup_and_regular_events_both_emitted(self):
@@ -260,7 +348,7 @@ class TestSetupHandler:
         assert 'ponder.on("Token:setup"' in src
 
     def test_setup_transfer_handler_still_uses_event_id(self):
-        """The Transfer handler should still use event.id, not 'initial'."""
+        """The Transfer handler should still use event.id as base, not 'initial'."""
         nodes = [
             _contract("c1", "Token",
                 events=[_event("Transfer")],
@@ -274,8 +362,9 @@ class TestSetupHandler:
             _edge("ed2", "c1", "event-setup", "e2", "trigger"),
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "id: event.id" in src   # Transfer handler
-        assert 'id: "initial"' in src  # setup handler
+        # With the suffix-retry loop, base IDs go into __baseId
+        assert "__baseId = event.id" in src       # Transfer handler
+        assert '__baseId = "initial"' in src      # setup handler
 
 
 # ── ContractRead node ─────────────────────────────────────────────────────────

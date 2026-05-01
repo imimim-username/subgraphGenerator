@@ -9,7 +9,7 @@ Key differences from AssemblyScript output:
   - Block timestamp: event.block.timestamp → Number(event.block.timestamp)
   - Log address:     event.address      → event.log.address
   - Math operators:  .plus()/.minus()   → +, -, *, /, %, **
-  - Entity insert:   new E(id) + save() → context.db.insert(table).values({...})
+  - Entity insert:   new E(id) + save() → suffix-retry insert loop (avoids UniqueConstraintError)
   - Aggregate upsert:load-or-create     → .onConflictDoUpdate((row) => ({...}))
   - Contract reads:  Contract.bind().try_fn() →
                      context.client.readContract({ abi, address, functionName, args, blockNumber })
@@ -449,11 +449,28 @@ class PonderCompiler:
                 # Auto-fill: field name matches an event parameter name.
                 values_lines.append(f"  {fname}: event.args.{fname},")
 
-        values_body = "\n".join(f"  {l}" for l in values_lines)
-        lines.append(f"await context.db.insert({var_name}).values({{")
+        # ── Emit ID suffix-retry insert ──
+        # If two events in the same block produce the same ID (e.g. both use
+        # blockNumber as their primary key), we append "_2", "_3", … until the
+        # insert succeeds rather than silently dropping or overwriting the record.
+        lines.append(f"{{ const __baseId = {id_expr};")
+        lines.append(f"for (let __n = 1; ; __n++) {{")
+        lines.append(f"  const __id = __n === 1 ? __baseId : `${{__baseId}}_${{__n}}`;")
+        lines.append(f"  try {{")
+        lines.append(f"    await context.db.insert({var_name}).values({{")
         for vl in values_lines:
-            lines.append(f"  {vl}")
-        lines.append("});")
+            # Replace the `id: <expr>` line with `id: __id` (the loop variable).
+            if vl.strip().startswith("id:"):
+                lines.append(f"      id: __id,")
+            else:
+                lines.append(f"      {vl}")
+        lines.append(f"    }});")
+        lines.append(f"    break;")
+        lines.append(f"  }} catch (__e) {{")
+        lines.append(f"    if ((__e as any)?.constructor?.name === \"UniqueConstraintError\") continue;")
+        lines.append(f"    throw __e;")
+        lines.append(f"  }}")
+        lines.append(f"}}}}")
         lines.append("")
 
         return lines, used_entities, extra_abi_imports
