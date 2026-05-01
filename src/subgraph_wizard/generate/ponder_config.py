@@ -574,9 +574,7 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
         "# ponder start → requires a real PostgreSQL database AND a schema name.",
         "#",
         "# Uncomment and fill in both lines to use PostgreSQL:",
-        "# The ?sslmode=disable prevents 'Connection terminated unexpectedly' on local Postgres.",
-        "# Remove it (or use ?sslmode=require) for managed cloud databases.",
-        "# DATABASE_URL=postgresql://user:password@localhost:5432/ponder?sslmode=disable",
+        "# DATABASE_URL=postgresql://ponder:yourpassword@localhost:5432/ponder",
         "# DATABASE_SCHEMA=public",
         "#",
         "# DATABASE_SCHEMA must be unique per running Ponder instance.",
@@ -681,10 +679,10 @@ Once you are inside the `psql` prompt (it looks like `postgres=#`), run:
 CREATE DATABASE ponder;
 
 -- Create a user Ponder will connect as (choose your own password)
-CREATE USER ponder_user WITH PASSWORD 'yourpassword';
+CREATE USER ponder WITH PASSWORD 'yourpassword';
 
 -- Give that user full access to the database
-GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;
+GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder;
 
 -- Exit psql
 \\q
@@ -694,14 +692,8 @@ Your `DATABASE_URL` will be (note `localhost` — this forces a TCP connection
 which uses password authentication, bypassing the peer auth restriction):
 
 ```
-postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
+postgresql://ponder:yourpassword@localhost:5432/ponder
 ```
-
-> **Why `?sslmode=disable`?** The Node.js PostgreSQL driver tries to negotiate
-> an SSL/TLS connection by default.  Local PostgreSQL servers typically have
-> self-signed certificates that the driver rejects, causing a
-> *"Connection terminated unexpectedly"* error.  Disabling SSL for local
-> connections is safe and avoids the issue entirely.
 
 ### 2c — Verify the connection before continuing
 
@@ -709,7 +701,7 @@ Test that you can actually connect with the new user **before** setting up `.env
 or running Ponder.  This catches credential problems early:
 
 ```bash
-psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder"
+psql "postgresql://ponder:yourpassword@localhost:5432/ponder"
 ```
 
 Replace `yourpassword` with the actual password you chose in `CREATE USER`.
@@ -727,9 +719,9 @@ Common outcomes:
 | psql error | Cause | Fix |
 |---|---|---|
 | `Connection refused` | PostgreSQL not running | `sudo systemctl start postgresql` |
-| `password authentication failed` | Wrong password in URL | `sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'new';"` |
+| `password authentication failed` | Wrong password in URL | `sudo -u postgres psql -c "ALTER USER ponder WITH PASSWORD 'new';"` |
 | `database "ponder" does not exist` | DB not created | `sudo -u postgres psql -c "CREATE DATABASE ponder;"` |
-| `role "ponder_user" does not exist` | User not created | Re-run Step 2b |
+| `role "ponder" does not exist` | User not created | Re-run Step 2b |
 
 Do not proceed to Step 3 until `psql` connects successfully.
 
@@ -747,9 +739,7 @@ Edit `.env.local` and fill in **all** of the following:
 {rpc_lines}
 
 # PostgreSQL connection string
-# The ?sslmode=disable is important for local Postgres — without it the Node.js
-# driver tries to negotiate SSL and gets "Connection terminated unexpectedly".
-DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
+DATABASE_URL=postgresql://ponder:yourpassword@localhost:5432/ponder
 
 # Schema to use inside the database.
 # Must be unique per running Ponder instance (two instances cannot share
@@ -849,13 +839,13 @@ Make sure the following environment variables are set (in `.env.local` or your
 hosting platform's secrets dashboard):
 
 ```
-DATABASE_URL=postgresql://user:password@host:5432/ponder?sslmode=disable
+DATABASE_URL=postgresql://ponder:yourpassword@host:5432/ponder
 DATABASE_SCHEMA=public        # unique per running Ponder instance
 PONDER_RPC_URL_<chainId>=...  # one per chain
 ```
 
-> **Managed Postgres (Supabase, Neon, Railway, etc.):** These services use SSL.
-> Omit `?sslmode=disable` or use `?sslmode=require` instead.
+> **Managed Postgres (Supabase, Neon, Railway, etc.):** These services often
+> require SSL.  Add `?sslmode=require` to your `DATABASE_URL` if connections fail.
 
 Then run:
 
@@ -895,13 +885,12 @@ export default createConfig({{
 In `.env.local` (or your hosting platform's secrets dashboard), add:
 
 ```
-DATABASE_URL=postgresql://user:password@host:5432/ponder?sslmode=disable
+DATABASE_URL=postgresql://ponder:yourpassword@host:5432/ponder
 DATABASE_SCHEMA=public
 ```
 
-> **Cloud Postgres (Supabase, Neon, Railway…):** Use `?sslmode=require` instead
-> of `?sslmode=disable`.  Local Postgres needs `disable` to avoid the
-> *"Connection terminated unexpectedly"* SSL handshake error.
+> **Cloud Postgres (Supabase, Neon, Railway…):** These services often require
+> SSL — add `?sslmode=require` to your `DATABASE_URL` if connections fail.
 
 `DATABASE_SCHEMA` is **required** by `ponder start`.  It names the Postgres
 schema (namespace) where Ponder will create its tables.  `public` is a safe
@@ -1068,7 +1057,7 @@ Example:
 
   **Step C — Test the credentials directly:**
   ```bash
-  psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder"
+  psql "postgresql://ponder:yourpassword@localhost:5432/ponder"
   ```
   Replace `yourpassword` with the actual password you used in `CREATE USER`.
   - If this succeeds (you get a `ponder=>` prompt) → PostgreSQL is fine,
@@ -1077,13 +1066,13 @@ Example:
   - If you get **"password authentication failed"** → the password is wrong.
     Reset it:
     ```bash
-    sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'newpassword';"
+    sudo -u postgres psql -c "ALTER USER ponder WITH PASSWORD 'newpassword';"
     ```
     Then update `DATABASE_URL` in `.env.local` with the new password.
   - If you get **"database ponder does not exist"** → recreate it:
     ```bash
     sudo -u postgres psql -c "CREATE DATABASE ponder;"
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;"
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder;"
     ```
   - If you get **"connection refused"** → PostgreSQL is not running.
     See Step A.
