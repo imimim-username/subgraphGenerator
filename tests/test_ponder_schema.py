@@ -248,22 +248,41 @@ class TestDerivedFrom:
 # ── List types ────────────────────────────────────────────────────────────────
 
 class TestListTypes:
-    def test_list_type_stored_as_text(self):
+    def test_mappable_list_type_uses_native_array(self):
+        """Primitive element types (BigInt, String, etc.) use t.<T>().array() syntax."""
         fields = [
             _field("id", "ID", required=True),
             _field("ids", "[BigInt!]"),
         ]
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "T", fields=fields)]))
-        assert "ids: t.text()" in out
-        assert "array stored as JSON text" in out
+        assert "ids: t.bigint().array()" in out
 
-    def test_list_type_required(self):
+    def test_string_list_uses_native_array(self):
+        fields = [
+            _field("id", "ID", required=True),
+            _field("tags", "[String!]"),
+        ]
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "T", fields=fields)]))
+        assert "tags: t.text().array()" in out
+
+    def test_list_type_required_uses_notnull(self):
+        """Required list field gets .notNull() after .array()."""
         fields = [
             _field("id", "ID", required=True),
             _field("ids", "[BigInt!]", required=True),
         ]
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "T", fields=fields)]))
-        assert "ids: t.text().notNull()" in out
+        assert "ids: t.bigint().array().notNull()" in out
+
+    def test_bigdecimal_list_falls_back_to_json_text(self):
+        """BigDecimal arrays can't use native array; fall back to JSON text."""
+        fields = [
+            _field("id", "ID", required=True),
+            _field("prices", "[BigDecimal!]"),
+        ]
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "T", fields=fields)]))
+        assert "prices: t.text()" in out
+        assert "JSON text" in out
 
 
 # ── Entity reference fields ───────────────────────────────────────────────────
@@ -285,6 +304,74 @@ class TestEntityRefs:
         ]
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer", fields=fields)]))
         assert "account: t.text().notNull()" in out
+
+
+# ── relations() exports ───────────────────────────────────────────────────────
+
+class TestRelations:
+    """relations() exports are generated for entity-reference fields."""
+
+    def _two_entity_cfg(self, derived=False):
+        """Transfer references Token; optionally Token has a @derivedFrom back-ref."""
+        token_fields = [_field("id", "ID", required=True)]
+        if derived:
+            token_fields.append(_field("transfers", "Transfer", derived_from="token"))
+
+        transfer_fields = [
+            _field("id", "ID", required=True),
+            _field("token", "Token", required=True),
+        ]
+        return _cfg(nodes=[
+            _entity("e1", "Token", fields=token_fields),
+            _entity("e2", "Transfer", fields=transfer_fields),
+        ])
+
+    def test_relations_import_added(self):
+        out = render_ponder_schema(self._two_entity_cfg())
+        assert 'import { onchainTable, relations }' in out
+
+    def test_no_relations_import_without_refs(self):
+        """Schema with no entity refs should only import onchainTable."""
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Foo")]))
+        assert 'relations' not in out
+
+    def test_one_relation_emitted(self):
+        out = render_ponder_schema(self._two_entity_cfg())
+        assert "transferRelations = relations(transfer" in out
+
+    def test_one_relation_uses_correct_fields(self):
+        out = render_ponder_schema(self._two_entity_cfg())
+        assert "one(token, { fields: [transfer.token], references: [token.id] })" in out
+
+    def test_many_relation_from_derived_from(self):
+        out = render_ponder_schema(self._two_entity_cfg(derived=True))
+        assert "tokenRelations = relations(token" in out
+        assert "many(transfer)" in out
+
+    def test_derived_from_field_not_in_table(self):
+        """@derivedFrom fields should not produce a column in onchainTable."""
+        out = render_ponder_schema(self._two_entity_cfg(derived=True))
+        # 'transfers:' must not appear inside the token onchainTable
+        token_table = out.split("onchainTable")[1].split("}));")[0]
+        assert "transfers:" not in token_table
+
+    def test_external_ref_skipped(self):
+        """A field referencing an entity not in the schema produces no relation export."""
+        fields = [
+            _field("id", "ID", required=True),
+            _field("user", "ExternalEntity"),
+        ]
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer", fields=fields)]))
+        assert "transferRelations" not in out
+
+    def test_no_relations_for_primitives(self):
+        """Primitive-typed fields don't produce relations."""
+        fields = [
+            _field("id", "ID", required=True),
+            _field("amount", "BigInt"),
+        ]
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer", fields=fields)]))
+        assert "relations" not in out
 
 
 # ── aggregateentity nodes ─────────────────────────────────────────────────────

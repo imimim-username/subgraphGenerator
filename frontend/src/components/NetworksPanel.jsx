@@ -319,6 +319,28 @@ function NetworkSection({ entry, idx, contractNames, onUpdate, onRemove }) {
                     style={{ ...INPUT_STYLE, width: 80 }}
                   />
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>WebSocket (ws)</span>
+                  <label className="nodrag" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={entry.wsEnabled ?? false}
+                      onChange={(e) => onUpdate({ ...entry, wsEnabled: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>enable (realtime)</span>
+                  </label>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: '0 0 116px' }}>disableCache</span>
+                  <label className="nodrag" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={entry.disableCache ?? false}
+                      onChange={(e) => onUpdate({ ...entry, disableCache: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>for local Anvil</span>
+                  </label>
+                </div>
               </div>
             )}
           </div>

@@ -255,6 +255,28 @@ class TestPerChainOptions:
         mainnet_section = out.split("optimism")[0]
         assert "pollingInterval: 1000" in mainnet_section
 
+    def test_disable_cache_emitted(self):
+        net = {"network": "mainnet", "contracts": _contract_instances(_inst()), "disableCache": True}
+        out = render_ponder_config(_cfg(networks=[net]))
+        assert "disableCache: true" in out
+
+    def test_disable_cache_omitted_when_false(self):
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))]
+        ))
+        assert "disableCache" not in out
+
+    def test_ws_emitted_when_enabled(self):
+        net = {"network": "mainnet", "contracts": _contract_instances(_inst()), "wsEnabled": True}
+        out = render_ponder_config(_cfg(networks=[net]))
+        assert "ws: process.env.PONDER_WS_URL_1" in out
+
+    def test_ws_omitted_when_disabled(self):
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))]
+        ))
+        assert "ws:" not in out
+
 
 # ── database block ─────────────────────────────────────────────────────────────
 
@@ -330,7 +352,8 @@ class TestMultiNetworkAndFallback:
         assert "Orphan:" in out
         assert "OrphanAbi" in out
 
-    def test_multiple_instances_comment_added(self):
+    def test_multiple_instances_same_chain_address_array(self):
+        """Multiple instances on the same chain → address: [...] array syntax."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", {
                 "Token": {
@@ -341,7 +364,10 @@ class TestMultiNetworkAndFallback:
                 }
             })],
         ))
-        assert "additional instance" in out
+        assert '"0xAAA"' in out
+        assert '"0xBBB"' in out
+        # Both addresses should appear inside an array literal
+        assert '["0xAAA", "0xBBB"]' in out
 
     def test_complete_config_structure(self):
         """Smoke test for a realistic complete config."""
@@ -423,3 +449,39 @@ class TestMultiNetworkSameContract:
         assert "optimism:" in out
         assert "arbitrumOne:" in out
         assert "id: 42161," in out  # arbitrum-one chain ID
+
+
+# ── Multi-address same chain & env example ────────────────────────────────────
+
+class TestMultiAddressAndEnvExample:
+    from subgraph_wizard.generate.ponder_config import render_ponder_env_example
+
+    def test_multi_address_same_chain_array(self):
+        """Two instances on one chain → address: ["0xAAA", "0xBBB"] array."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", {
+                "Token": {"instances": [_inst("0xAAA", 100), _inst("0xBBB", 200)]}
+            })]
+        ))
+        assert '["0xAAA", "0xBBB"]' in out
+
+    def test_multi_address_uses_min_start_block(self):
+        """startBlock should be the minimum across all same-chain instances."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", {
+                "Token": {"instances": [_inst("0xAAA", 500), _inst("0xBBB", 100)]}
+            })]
+        ))
+        assert "startBlock: 100" in out
+        assert "startBlock: 500" not in out
+
+    def test_ws_var_in_env_example(self):
+        from subgraph_wizard.generate.ponder_config import render_ponder_env_example
+        net = {"network": "mainnet", "contracts": {}, "wsEnabled": True}
+        out = render_ponder_env_example({"networks": [net]})
+        assert "PONDER_WS_URL_1=" in out
+
+    def test_ws_var_absent_when_not_enabled(self):
+        from subgraph_wizard.generate.ponder_config import render_ponder_env_example
+        out = render_ponder_env_example({"networks": [{"network": "mainnet", "contracts": {}}]})
+        assert "PONDER_WS_URL" not in out

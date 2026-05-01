@@ -190,6 +190,9 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         ]
         polling_raw = net_entry.get("pollingInterval")
         max_range_raw = net_entry.get("ethGetLogsBlockRange")
+        ws_enabled: bool = bool(net_entry.get("wsEnabled", False))
+        disable_cache: bool = bool(net_entry.get("disableCache", False))
+
         if polling_raw not in (None, ""):
             try:
                 fields.append(f"pollingInterval: {int(polling_raw)}")
@@ -200,6 +203,11 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 fields.append(f"ethGetLogsBlockRange: {int(max_range_raw)}")
             except (ValueError, TypeError):
                 pass
+        if ws_enabled:
+            ws_var = f"PONDER_WS_URL_{chain_id}"
+            fields.append(f"ws: process.env.{ws_var}")
+        if disable_cache:
+            fields.append("disableCache: true")
 
         if len(fields) <= 2:
             # Compact single-line form when no advanced options
@@ -244,31 +252,38 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
             # ── Single-chain format ──────────────────────────────────────────
             chain_name = chains_used[0]
             chain_instances = instances_by_chain[chain_name]
-            inst = chain_instances[0]
+
+            # Multiple instances on the same chain → address array
+            if len(chain_instances) == 1:
+                addr_val = _addr(chain_instances[0])
+            else:
+                addr_val = "[" + ", ".join(_addr(i) for i in chain_instances) + "]"
+
+            # Use the earliest startBlock across all instances
+            start_block = min(
+                i["startBlock"] for i in chain_instances if i["startBlock"]
+            ) if any(i["startBlock"] for i in chain_instances) else 0
+
+            # Use the first instance's endBlock (if consistent; omit if mixed)
+            end_blocks = [i.get("endBlock") for i in chain_instances if i.get("endBlock")]
+            end_block: int | None = end_blocks[0] if len(set(end_blocks)) == 1 else None
 
             fields = [
                 f'chain: "{chain_name}"',
                 f"abi: {ct_name}Abi",
-                f"address: {_addr(inst)}",
+                f"address: {addr_val}",
             ]
-            if inst["startBlock"]:
-                fields.append(f"startBlock: {inst['startBlock']}")
-            if inst.get("endBlock"):
-                fields.append(f"endBlock: {inst['endBlock']}")
+            if start_block:
+                fields.append(f"startBlock: {start_block}")
+            if end_block:
+                fields.append(f"endBlock: {end_block}")
             if include_call_traces:
                 fields.append("includeCallTraces: true")
             if include_tx_receipts:
                 fields.append("includeTransactionReceipts: true")
 
-            extra_comment = ""
-            if len(chain_instances) > 1:
-                extra_comment = (
-                    f"  /* {len(chain_instances) - 1} additional instance(s) "
-                    f"on {chain_name} — add manually */"
-                )
-
             inner = "".join(f"\n      {f}," for f in fields)
-            contract_lines.append(f"    {ct_name}: {{{extra_comment}{inner}\n    }},")
+            contract_lines.append(f"    {ct_name}: {{{inner}\n    }},")
 
         else:
             # ── Multi-chain format ───────────────────────────────────────────
@@ -396,7 +411,10 @@ def render_ponder_package_json(project_name: str) -> str:
 
 
 def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
-    """Return a .env.example with one PONDER_RPC_URL_{chainId}= line per chain.
+    """Return a .env.example with RPC and optional WS URL lines per chain.
+
+    Emits ``PONDER_RPC_URL_{chainId}`` for every chain.  When a network has
+    ``wsEnabled: true``, also emits a ``PONDER_WS_URL_{chainId}`` line.
 
     Args:
         visual_config: Parsed visual-config.json dict.
@@ -408,11 +426,13 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
 
     seen_slugs: list[str] = []
     seen_set: set[str] = set()
+    slug_to_entry: dict[str, dict[str, Any]] = {}
     for net_entry in networks_config:
         slug = net_entry.get("network", "").strip()
         if slug and slug not in seen_set:
             seen_slugs.append(slug)
             seen_set.add(slug)
+            slug_to_entry[slug] = net_entry
 
     if not seen_slugs:
         seen_slugs = ["mainnet"]
@@ -424,8 +444,11 @@ def render_ponder_env_example(visual_config: dict[str, Any]) -> str:
     ]
     for slug in seen_slugs:
         chain_id = CHAIN_IDS.get(slug, 0)
-        env_var = f"PONDER_RPC_URL_{chain_id}"
-        lines.append(f"{env_var}=https://eth-{slug}.g.alchemy.com/v2/YOUR_KEY")
+        lines.append(f"PONDER_RPC_URL_{chain_id}=https://eth-{slug}.g.alchemy.com/v2/YOUR_KEY")
+        if slug_to_entry.get(slug, {}).get("wsEnabled"):
+            lines.append(
+                f"PONDER_WS_URL_{chain_id}=wss://eth-{slug}.g.alchemy.com/v2/YOUR_KEY"
+            )
 
     lines += [
         "",
