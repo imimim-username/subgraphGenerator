@@ -25,7 +25,7 @@ const DEBOUNCE_MS = 600;
  *   isValidating: boolean,
  * }}
  */
-export function useValidation(nodes, edges) {
+export function useValidation(nodes, edges, networks = []) {
   const [serverIssues, setServerIssues]     = useState([]);
   const [hasServerErrors, setHasServerErrors] = useState(false);
   const [isValidating, setIsValidating]     = useState(false);
@@ -50,7 +50,7 @@ export function useValidation(nodes, edges) {
   );
 
   // ── 2. Server-side semantic validation (debounced) ──────────────────────────
-  const runValidation = useCallback(async (currentNodes, currentEdges) => {
+  const runValidation = useCallback(async (currentNodes, currentEdges, currentNetworks) => {
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -60,7 +60,7 @@ export function useValidation(nodes, edges) {
       const body = {
         schema_version: 1,
         subgraph_name: '',
-        networks: [],
+        networks: currentNetworks ?? [],
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type,
@@ -108,10 +108,10 @@ export function useValidation(nodes, edges) {
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      runValidation(nodes, edges);
+      runValidation(nodes, edges, networks);
     }, DEBOUNCE_MS);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [nodes, edges, runValidation]);
+  }, [nodes, edges, networks, runValidation]);
 
   // ── Merge both issue sets ───────────────────────────────────────────────────
   const issues = useMemo(

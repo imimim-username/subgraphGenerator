@@ -595,7 +595,7 @@ export default function App() {
 
   // ── Validation ────────────────────────────────────────────────────────────
   const { issues, hasErrors, issuesByNodeId, issuesByEdgeId, isValidating } =
-    useValidation(nodes, edges);
+    useValidation(nodes, edges, networks);
 
   // ── Auto-layout ───────────────────────────────────────────────────────────
   const applyLayout = useAutoLayout(nodes, edges, setNodes, reactFlowInstance);

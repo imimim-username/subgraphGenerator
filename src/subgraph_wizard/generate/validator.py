@@ -256,6 +256,21 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = visual_config.get("edges", [])
     nodes_by_id: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
 
+    # Build a set of contract type names that have at least one instance with
+    # a non-zero startBlock in the Networks panel config.  These contracts are
+    # exempt from the CONTRACT_START_BLOCK_ZERO warning because the user has
+    # set the start block in the Networks panel rather than the inline field.
+    _networks_have_start_block: set[str] = set()
+    for _net_entry in visual_config.get("networks", []):
+        for _ct_name, _ct_data in _net_entry.get("contracts", {}).items():
+            for _inst in _ct_data.get("instances", []):
+                try:
+                    if int(_inst.get("startBlock") or 0) > 0:
+                        _networks_have_start_block.add(_ct_name)
+                        break
+                except (ValueError, TypeError):
+                    pass
+
     # Build quick lookup: which target handles have incoming edges
     wired_targets: set[tuple[str, str]] = {
         (e["target"], e.get("targetHandle", "")) for e in edges
@@ -313,26 +328,31 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
             # The generator tries Etherscan auto-detection, but it silently falls
             # back to 0 if the API key is missing or the request fails.  Indexing
             # from block 0 is extremely slow and may timeout on hosted services.
+            #
+            # Skip the warning when the Networks panel already has a non-zero
+            # startBlock for this contract — the user has configured it there
+            # instead of in the node's inline field.
             contract_name = data.get("name", nid)
-            instances = data.get("instances") or [{"label": "", "startBlock": data.get("startBlock", 0)}]
-            for inst in instances:
-                raw_sb = inst.get("startBlock", 0)
-                try:
-                    sb = int(raw_sb or 0)
-                except (ValueError, TypeError):
-                    sb = 0
-                if sb == 0:
-                    label = inst.get("label", "").strip()
-                    inst_desc = f" (instance '{label}')" if label else ""
-                    _warn(
-                        "CONTRACT_START_BLOCK_ZERO",
-                        f"Contract '{contract_name}'{inst_desc} has startBlock=0. "
-                        f"If Etherscan auto-detection is unavailable, the subgraph will "
-                        f"index from genesis, which is extremely slow. Set an explicit "
-                        f"startBlock to the block where the contract was deployed.",
-                        node_id=nid,
-                    )
-                    break  # one warning per contract node is enough
+            if contract_name not in _networks_have_start_block:
+                instances = data.get("instances") or [{"label": "", "startBlock": data.get("startBlock", 0)}]
+                for inst in instances:
+                    raw_sb = inst.get("startBlock", 0)
+                    try:
+                        sb = int(raw_sb or 0)
+                    except (ValueError, TypeError):
+                        sb = 0
+                    if sb == 0:
+                        label = inst.get("label", "").strip()
+                        inst_desc = f" (instance '{label}')" if label else ""
+                        _warn(
+                            "CONTRACT_START_BLOCK_ZERO",
+                            f"Contract '{contract_name}'{inst_desc} has startBlock=0. "
+                            f"If Etherscan auto-detection is unavailable, the subgraph will "
+                            f"index from genesis, which is extremely slow. Set an explicit "
+                            f"startBlock to the block where the contract was deployed.",
+                            node_id=nid,
+                        )
+                        break  # one warning per contract node is enough
 
         elif ntype == "entity":
             if not data.get("name", "").strip():
