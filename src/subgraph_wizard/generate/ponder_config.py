@@ -138,6 +138,25 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                     start_block = int(start_block or 0)
                 except (ValueError, TypeError):
                     start_block = 0
+                # Auto-detect deployment block via Etherscan when startBlock is
+                # 0 and a real address is available.  Mirrors subgraph_yaml.py.
+                # Requires ETHERSCAN_API_KEY in the environment; silently skips
+                # if the key is absent or the lookup fails.
+                _zero = "0x0000000000000000000000000000000000000000"
+                if start_block == 0 and addr and addr != _zero:
+                    try:
+                        from subgraph_wizard.abi.etherscan import (
+                            get_contract_deployment_block,
+                        )
+                        detected = get_contract_deployment_block(slug, addr)
+                        if detected is not None:
+                            start_block = detected
+                    except Exception as exc:
+                        logger.warning(
+                            "startBlock auto-detection failed for %s on %s: %s",
+                            addr, slug, exc,
+                        )
+
                 end_block_raw = inst.get("endBlock", "")
                 try:
                     end_block: int | None = int(end_block_raw) if end_block_raw else None
