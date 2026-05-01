@@ -657,18 +657,40 @@ sudo systemctl enable postgresql
 
 ### 2b — Create the database
 
-```bash
-# Connect to the local Postgres server as the superuser
-psql -U postgres
+> **Linux only — "Peer authentication failed":**
+> PostgreSQL on Linux defaults to *peer authentication* for local connections.
+> This means it checks that your **Linux username** matches the **database username**.
+> Since the superuser account is named `postgres`, you must use `sudo` to switch to
+> that Linux account first.  Running `psql -U postgres` directly will fail with
+> *"Peer authentication failed for user postgres"*.
 
-# Inside psql, create a database and a dedicated user (replace passwords):
+```bash
+# Connect to the local Postgres server as the superuser (Linux / macOS):
+sudo -u postgres psql
+```
+
+> **macOS note:** If you installed via Homebrew, your own macOS username is likely
+> already the superuser. Try `psql postgres` (no sudo) if the above fails.
+
+Once you are inside the `psql` prompt (it looks like `postgres=#`), run:
+
+```sql
+-- Create a dedicated database for this Ponder project
 CREATE DATABASE ponder;
+
+-- Create a user Ponder will connect as (choose your own password)
 CREATE USER ponder_user WITH PASSWORD 'yourpassword';
+
+-- Give that user full access to the database
 GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;
+
+-- Exit psql
 \\q
 ```
 
-Your `DATABASE_URL` will be:
+Your `DATABASE_URL` will be (note `localhost` — this forces a TCP connection
+which uses password authentication, bypassing the peer auth restriction):
+
 ```
 postgresql://ponder_user:yourpassword@localhost:5432/ponder
 ```
