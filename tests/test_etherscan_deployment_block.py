@@ -11,6 +11,7 @@ import pytest
 # doesn't trigger.
 os.environ.setdefault("ETHERSCAN_API_KEY", "TEST_KEY")
 os.environ.setdefault("OPTIMISM_ETHERSCAN_API_KEY", "TEST_OP_KEY")
+os.environ.setdefault("RPC_API_KEY", "TEST_RPC_KEY")
 
 from subgraph_wizard.abi.etherscan import get_contract_deployment_block  # noqa: E402
 
@@ -63,8 +64,10 @@ class TestStep1Failures:
         monkeypatch.delenv("ETHERSCAN_API_KEY", raising=False)
         assert get_contract_deployment_block("mainnet", ADDR) is None
 
-    def test_optimism_no_key_returns_none(self, monkeypatch):
-        monkeypatch.delenv("OPTIMISM_ETHERSCAN_API_KEY", raising=False)
+    def test_optimism_no_etherscan_key_no_rpc_key_returns_none(self, monkeypatch):
+        """Optimism now uses the unified key; both keys absent → None."""
+        monkeypatch.delenv("ETHERSCAN_API_KEY", raising=False)
+        monkeypatch.delenv("RPC_API_KEY", raising=False)
         assert get_contract_deployment_block("optimism", ADDR) is None
 
     def test_unknown_network_returns_none(self):
@@ -81,18 +84,17 @@ class TestStep1Failures:
         assert get_contract_deployment_block("mainnet", ADDR) is None
 
 
-class TestOptimismChainSpecificApi:
-    """Optimism uses api-optimistic.etherscan.io, not the v2 unified API."""
+class TestApiBaseUrls:
+    """Both Optimism and mainnet use the v2 unified API; RPC handles fallback."""
 
     @patch("subgraph_wizard.abi.etherscan._get")
-    def test_optimism_uses_chain_specific_base_url(self, mock_get):
+    def test_optimism_uses_v2_unified_url(self, mock_get):
         mock_get.return_value = _resp(_creation_ok(block_number="130789234"))
         result = get_contract_deployment_block("optimism", ADDR)
         assert result == 130789234
         call_url = mock_get.call_args[0][0]
-        assert "api-optimistic.etherscan.io" in call_url
-        assert "v2" not in call_url
-        assert "chainid" not in call_url
+        assert "api.etherscan.io/v2/api" in call_url
+        assert "chainid=10" in call_url
 
     @patch("subgraph_wizard.abi.etherscan._get")
     def test_mainnet_uses_v2_unified_url(self, mock_get):
@@ -202,3 +204,63 @@ class TestStep3TxListFallback:
         ]
         result = get_contract_deployment_block("optimism", ADDR)
         assert result == 130789234
+
+
+# ── Step 4: RPC fallback ──────────────────────────────────────────────────────
+
+class TestStep4RpcFallback:
+    @patch("subgraph_wizard.abi.etherscan.requests")
+    @patch("subgraph_wizard.abi.etherscan._get")
+    def test_rpc_used_when_all_etherscan_steps_fail(self, mock_get, mock_requests):
+        """After Etherscan steps fail, RPC eth_getTransactionByHash is tried."""
+        mock_get.side_effect = [
+            _resp(_creation_ok()),   # step 1
+            _resp(_tx_null()),       # step 2
+            _resp(_txlist_empty()),  # step 3a
+            _resp(_txlist_empty()),  # step 3b
+        ]
+        rpc_resp = MagicMock()
+        rpc_resp.raise_for_status = MagicMock()
+        rpc_resp.json.return_value = {
+            "jsonrpc": "2.0",
+            "result": {"blockNumber": "0x1F26B82"},  # 32664450
+            "id": 1,
+        }
+        mock_requests.post.return_value = rpc_resp
+
+        result = get_contract_deployment_block("optimism", ADDR)
+        assert result == 32664450
+        # Verify it used the Optimism Alchemy URL
+        call_url = mock_requests.post.call_args[0][0]
+        assert "opt-mainnet.g.alchemy.com" in call_url
+
+    @patch("subgraph_wizard.abi.etherscan._get")
+    def test_rpc_skipped_when_no_rpc_key(self, mock_get, monkeypatch):
+        """If RPC_API_KEY is absent, step 4 is skipped and None is returned."""
+        monkeypatch.delenv("RPC_API_KEY", raising=False)
+        mock_get.side_effect = [
+            _resp(_creation_ok()),
+            _resp(_tx_null()),
+            _resp(_txlist_empty()),
+            _resp(_txlist_empty()),
+        ]
+        assert get_contract_deployment_block("optimism", ADDR) is None
+
+    @patch("subgraph_wizard.abi.etherscan.requests")
+    @patch("subgraph_wizard.abi.etherscan._get")
+    def test_rpc_uses_correct_base_for_mainnet(self, mock_get, mock_requests):
+        mock_get.side_effect = [
+            _resp(_creation_ok()),
+            _resp(_tx_null()),
+            _resp(_txlist_empty()),
+            _resp(_txlist_empty()),
+        ]
+        rpc_resp = MagicMock()
+        rpc_resp.raise_for_status = MagicMock()
+        rpc_resp.json.return_value = {
+            "jsonrpc": "2.0", "result": {"blockNumber": "0x100"}, "id": 1,
+        }
+        mock_requests.post.return_value = rpc_resp
+        get_contract_deployment_block("mainnet", ADDR)
+        call_url = mock_requests.post.call_args[0][0]
+        assert "eth-mainnet.g.alchemy.com" in call_url

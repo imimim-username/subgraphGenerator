@@ -251,9 +251,51 @@ def get_supported_networks_for_explorer() -> list[str]:
 # Networks that are NOT covered by the Etherscan v2 unified API for the
 # getcontractcreation endpoint and must use their own chain-specific API.
 # Each entry maps a Graph network slug to (api_base_url, env_var_for_key).
-_CHAIN_SPECIFIC_APIS: dict[str, tuple[str, str]] = {
-    "optimism": ("https://api-optimistic.etherscan.io/api", "OPTIMISM_ETHERSCAN_API_KEY"),
+# Optimism is intentionally NOT listed here — the unified key is tried first
+# and the RPC fallback (step 4) handles it when Etherscan fails.
+_CHAIN_SPECIFIC_APIS: dict[str, tuple[str, str]] = {}
+
+# Alchemy RPC base URLs per Graph network slug.
+# The full endpoint is  {base}{RPC_API_KEY}.
+# Used as a final fallback when all Etherscan lookups fail.
+_ALCHEMY_RPC_BASES: dict[str, str] = {
+    "mainnet":       "https://eth-mainnet.g.alchemy.com/v2/",
+    "optimism":      "https://opt-mainnet.g.alchemy.com/v2/",
+    "arbitrum-one":  "https://arb-mainnet.g.alchemy.com/v2/",
+    "base":          "https://base-mainnet.g.alchemy.com/v2/",
+    "polygon":       "https://polygon-mainnet.g.alchemy.com/v2/",
+    "bnb":           "https://bnb-mainnet.g.alchemy.com/v2/",
+    "avalanche":     "https://avax-mainnet.g.alchemy.com/v2/",
+    "gnosis":        "https://gnosis-mainnet.g.alchemy.com/v2/",
+    "zksync-era":    "https://zksync-mainnet.g.alchemy.com/v2/",
+    "linea":         "https://linea-mainnet.g.alchemy.com/v2/",
+    "scroll":        "https://scroll-mainnet.g.alchemy.com/v2/",
+    "sepolia":       "https://eth-sepolia.g.alchemy.com/v2/",
 }
+
+
+def _rpc_get_tx_block(rpc_url: str, tx_hash: str) -> int | None:
+    """Call ``eth_getTransactionByHash`` on a JSON-RPC endpoint.
+
+    Uses a direct POST (bypassing the Etherscan rate limiter) since this
+    targets a different service.  Returns the block number as an integer,
+    or ``None`` on any failure.
+    """
+    try:
+        r = requests.post(
+            rpc_url,
+            json={"jsonrpc": "2.0", "method": "eth_getTransactionByHash",
+                  "params": [tx_hash], "id": 1},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        result = r.json().get("result") or {}
+        block_hex = result.get("blockNumber") if isinstance(result, dict) else None
+        if block_hex:
+            return int(block_hex, 16)
+    except Exception as exc:
+        logger.debug("RPC eth_getTransactionByHash failed for %s: %s", tx_hash, exc)
+    return None
 
 
 def get_contract_deployment_block(network: str, address: str) -> int | None:
@@ -413,6 +455,27 @@ def get_contract_deployment_block(network: str, address: str) -> int | None:
             logger.debug("%s returned no results for %s on %s", action, address, network)
         except Exception as exc:
             logger.warning("%s fallback failed for %s on %s: %s", action, address, network, exc)
+
+    # ── Step 4: RPC fallback (eth_getTransactionByHash via Alchemy) ───────────
+    # We still have tx_hash from step 1.  Use a direct JSON-RPC call as a last
+    # resort — same API key, different base URL per chain.  Works even when
+    # Etherscan's proxy module is unsupported for a given network.
+    rpc_api_key = os.environ.get("RPC_API_KEY")
+    rpc_base = _ALCHEMY_RPC_BASES.get(network)
+    if rpc_api_key and rpc_base:
+        rpc_url = f"{rpc_base}{rpc_api_key}"
+        block = _rpc_get_tx_block(rpc_url, tx_hash)
+        if block is not None:
+            logger.info(
+                "Auto-detected startBlock %d for %s on %s (via RPC fallback)",
+                block, address, network,
+            )
+            return block
+        logger.warning("RPC fallback also failed for %s on %s", address, network)
+    elif not rpc_api_key:
+        logger.debug("RPC_API_KEY not set; skipping RPC fallback for %s on %s", address, network)
+    else:
+        logger.debug("No Alchemy RPC base URL configured for network %r", network)
 
     logger.warning(
         "Could not auto-detect startBlock for %s on %s after all methods exhausted",
