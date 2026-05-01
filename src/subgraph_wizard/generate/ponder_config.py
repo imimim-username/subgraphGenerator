@@ -705,7 +705,7 @@ which uses password authentication, bypassing the peer auth restriction):
 postgresql://ponder:yourpassword@localhost:5432/ponder
 ```
 
-### 2c — Verify the connection before continuing
+### 2c — Verify the connection before continuing (recommended)
 
 Test that you can actually connect with the new user **before** setting up `.env.local`
 or running Ponder.  This catches credential problems early:
@@ -735,7 +735,7 @@ Common outcomes:
 
 Do not proceed to Step 3 until `psql` connects successfully.
 
-### 2c — Create `.env.local`
+### 2d — Create `.env.local`
 
 ```bash
 cd "{output_dir}"
@@ -856,6 +856,15 @@ PONDER_RPC_URL_<chainId>=...  # one per chain
 
 > **Managed Postgres (Supabase, Neon, Railway, etc.):** These services often
 > require SSL.  Add `?sslmode=require` to your `DATABASE_URL` if connections fail.
+
+> **PostgreSQL 15+ schema permissions:** If Ponder fails with
+> `permission denied for schema public`, the database user lacks `CREATE`
+> privilege on the schema (PG 15 revoked this by default).  Grant it once:
+> ```bash
+> sudo -u postgres psql -d ponder -c "GRANT ALL ON SCHEMA public TO ponder;"
+> ```
+> On managed databases, look for a "Schema privileges" option in the dashboard,
+> or connect as the admin user and run the `GRANT` SQL manually.
 
 Then run:
 
@@ -984,10 +993,12 @@ Ponder will:
 3. Hot-reload handlers when you edit `src/index.ts`.
 
 > **`pnpm dev` vs `pnpm start`:**
-> - `pnpm dev` — development mode; uses PGlite (no Postgres needed); `DATABASE_SCHEMA` not required.
-> - `pnpm start` — production mode; **requires** PostgreSQL (`DATABASE_URL`) and an
->   explicit schema (`DATABASE_SCHEMA`).  Running `pnpm start` without these set will
->   fail with *"Database schema required"*.
+> - `pnpm dev` — development mode with hot-reload.  If this project uses PGlite
+>   (the default), no Postgres is needed and `DATABASE_SCHEMA` is not required.
+>   If it was generated with PostgreSQL, `pnpm dev` also uses your `DATABASE_URL`.
+> - `pnpm start` — production mode; **always requires** PostgreSQL (`DATABASE_URL`)
+>   and an explicit schema (`DATABASE_SCHEMA`).  Running `pnpm start` without
+>   these set will fail with *"Database schema required"*.
 
 ---
 
@@ -1035,9 +1046,25 @@ Example:
 ## Troubleshooting
 
 **`Error: Invalid RPC URL`**
-→ Check that your `PONDER_RPC_URL_*` variable(s) are set in `.env` and are
-  valid HTTPS URLs.  Required variable(s) for this project:
+→ Check that your `PONDER_RPC_URL_*` variable(s) are set in `.env.local` and
+  are valid HTTPS URLs.  Required variable(s) for this project:
   {", ".join(f"`{v}`" for v in rpc_vars)}
+
+**`Peer authentication failed for user "postgres"`** (when running `psql -U postgres`)
+→ On Linux, PostgreSQL uses *peer authentication* by default — it checks that
+  your Linux username matches the database username.  You cannot log in as the
+  `postgres` database user unless you are also the `postgres` Linux user.
+  Use `sudo` to switch:
+  ```bash
+  sudo -u postgres psql
+  ```
+
+**`BuildError: Database schema required`** (when running `pnpm start`)
+→ `DATABASE_SCHEMA` is missing from `.env.local`.  Add it:
+  ```
+  DATABASE_SCHEMA=public
+  ```
+  Note: `pnpm dev` does not need this; only `pnpm start` requires it.
 
 **`Error: DATABASE_URL is not set`**{' (only relevant if you switch to postgres)' if not use_postgres else ''}
 → Set `DATABASE_URL` in your `.env.local` file (or your deployment platform's
