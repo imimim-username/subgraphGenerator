@@ -21,35 +21,74 @@ logger = logging.getLogger(__name__)
 # Ponder requires a numeric ``id`` per chain entry.
 # Fall back to 0 if the slug is not in this table (validator warns separately).
 CHAIN_IDS: dict[str, int] = {
+    # ── Ethereum mainnet & testnets ───────────────────────────────────────────
     "mainnet":          1,
+    "goerli":           5,           # deprecated but still used
     "sepolia":          11155111,
     "holesky":          17000,
-    "polygon":          137,
-    "polygon-mumbai":   80001,
-    "amoy":             80002,
-    "arbitrum-one":     42161,
-    "arbitrum-sepolia": 421614,
+    # ── Optimism ──────────────────────────────────────────────────────────────
     "optimism":         10,
+    "optimism-goerli":  420,         # deprecated
     "optimism-sepolia": 11155420,
+    # ── Base ──────────────────────────────────────────────────────────────────
     "base":             8453,
+    "base-goerli":      84531,       # deprecated
     "base-sepolia":     84532,
-    "avalanche":        43114,
+    # ── Arbitrum ──────────────────────────────────────────────────────────────
+    "arbitrum-one":     42161,
+    "arbitrum-goerli":  421613,      # deprecated
+    "arbitrum-sepolia": 421614,
+    # ── Polygon ───────────────────────────────────────────────────────────────
+    "polygon":          137,
+    "mumbai":           80001,       # frontend uses "mumbai" (not "polygon-mumbai")
+    "polygon-mumbai":   80001,       # alias
+    "amoy":             80002,
+    # ── BNB Chain ─────────────────────────────────────────────────────────────
     "bsc":              56,
+    "bnb":              56,          # alias
     "bsc-testnet":      97,
+    # ── Avalanche ─────────────────────────────────────────────────────────────
+    "avalanche":        43114,
+    "fuji":             43113,
+    # ── Gnosis ────────────────────────────────────────────────────────────────
     "gnosis":           100,
     "gnosis-chiado":    10200,
-    "fantom":           250,
+    # ── zkSync ────────────────────────────────────────────────────────────────
     "zksync-era":       324,
     "zksync-sepolia":   300,
+    # ── Linea ─────────────────────────────────────────────────────────────────
     "linea":            59144,
     "linea-sepolia":    59141,
+    # ── Scroll ────────────────────────────────────────────────────────────────
     "scroll":           534352,
     "scroll-sepolia":   534351,
+    # ── Fantom ────────────────────────────────────────────────────────────────
+    "fantom":           250,
+    "fantom-testnet":   4002,
+    # ── Other L2s & chains ────────────────────────────────────────────────────
+    "blast":            81457,
+    "blast-sepolia":    168587773,
+    "zora":             7777777,
+    "zora-sepolia":     999999999,
+    "mode":             34443,
+    "mode-sepolia":     919,
+    "mantle":           5000,
+    "mantle-sepolia":   5003,
+    "fraxtal":          252,
+    "fraxtal-holesky":  2522,
     "celo":             42220,
+    "celo-alfajores":   44787,
     "moonbeam":         1284,
     "moonriver":        1285,
     "aurora":           1313161554,
-    "bnb":              56,          # alias
+    "metis":            1088,
+    "kava":             2222,
+    "cronos":           25,
+    "harmony":          1666600000,
+    "taiko":            167000,
+    "taiko-hekla":      167009,
+    "cyber":            7560,
+    "redstone":         690,
 }
 
 
@@ -76,7 +115,7 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
 
     Emits the following options when set by the user:
     - ``database`` — postgres connection block (pglite is the default, omitted)
-    - ``ordering`` — omnichain (default, omitted), multichain, experimental_isolated
+    - ``ordering`` — multichain (default, omitted), omnichain, experimental_isolated
     - per-chain ``pollingInterval`` and ``ethGetLogsBlockRange``
     - per-contract ``endBlock``, ``includeCallTraces``, ``includeTransactionReceipts``
 
@@ -278,10 +317,11 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
             else:
                 addr_val = "[" + ", ".join(_addr(i) for i in chain_instances) + "]"
 
-            # Use the earliest startBlock across all instances
-            start_block = min(
-                i["startBlock"] for i in chain_instances if i["startBlock"]
-            ) if any(i["startBlock"] for i in chain_instances) else 0
+            # Use the earliest startBlock across all instances.
+            # If ANY instance has startBlock=0 (index from genesis) the effective
+            # start is 0, so we omit the field entirely (Ponder's default = 0).
+            all_starts = [i["startBlock"] for i in chain_instances]
+            start_block = 0 if any(s == 0 for s in all_starts) else min(all_starts)
 
             # Use the first instance's endBlock (if consistent; omit if mixed)
             end_blocks = [i.get("endBlock") for i in chain_instances if i.get("endBlock")]

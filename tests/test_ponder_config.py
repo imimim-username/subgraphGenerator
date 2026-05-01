@@ -577,3 +577,139 @@ class TestHowtoEnvLocal:
         # Should contain something like "Ponder reads .env.local"
         assert ".env.local" in howto and ".env.example" in howto
 
+
+# ── CHAIN_IDS coverage ────────────────────────────────────────────────────────
+
+class TestChainIds:
+    """Regression: frontend KNOWN_NETWORKS slugs must all be in CHAIN_IDS."""
+
+    from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+
+    # These are the slugs the frontend dropdown can produce.
+    FRONTEND_SLUGS = [
+        "mainnet", "sepolia", "holesky",
+        "optimism", "optimism-sepolia",
+        "base", "base-sepolia",
+        "zora", "mode", "blast", "fraxtal", "cyber", "redstone",
+        "arbitrum-one", "arbitrum-sepolia",
+        "polygon", "amoy",
+        "bnb", "bsc-testnet",
+        "avalanche", "fuji",
+        "gnosis", "gnosis-chiado",
+        "zksync-era", "zksync-sepolia",
+        "linea", "linea-sepolia",
+        "scroll", "scroll-sepolia",
+        "mantle", "celo", "fantom",
+        # Legacy / still-used
+        "mumbai", "goerli", "optimism-goerli", "arbitrum-goerli", "base-goerli",
+    ]
+
+    def test_all_frontend_slugs_have_chain_id(self):
+        """Every slug the UI dropdown can produce must have a non-zero chain ID."""
+        from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+        missing = [s for s in self.FRONTEND_SLUGS if CHAIN_IDS.get(s, 0) == 0]
+        assert missing == [], f"Slugs missing from CHAIN_IDS: {missing}"
+
+    def test_mumbai_resolves_correctly(self):
+        """Frontend uses 'mumbai' (not 'polygon-mumbai') — must resolve to 80001."""
+        from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+        assert CHAIN_IDS["mumbai"] == 80001
+
+    def test_goerli_resolves_correctly(self):
+        """Deprecated but still present in some configs."""
+        from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+        assert CHAIN_IDS["goerli"] == 5
+
+    def test_unknown_slug_generates_id_zero(self):
+        """Unknown slugs return 0 — caller handles that gracefully."""
+        from subgraph_wizard.generate.ponder_config import CHAIN_IDS
+        assert CHAIN_IDS.get("my-local-devnet", 0) == 0
+
+    def test_mumbai_config_produces_correct_chain_id(self):
+        """End-to-end: generating config for 'mumbai' must use id 80001."""
+        cfg = _cfg(networks=[_net("mumbai", _contract_instances(_inst("0xABC", 0)))])
+        out = render_ponder_config(cfg)
+        assert "id: 80001" in out
+        assert "PONDER_RPC_URL_80001" in out
+
+    def test_goerli_config_produces_correct_chain_id(self):
+        """End-to-end: 'goerli' must use id 5 (not 0)."""
+        cfg = _cfg(networks=[_net("goerli", _contract_instances(_inst("0xABC", 0)))])
+        out = render_ponder_config(cfg)
+        assert "id: 5" in out
+        assert "PONDER_RPC_URL_5" in out
+
+    def test_blast_config_produces_correct_chain_id(self):
+        """Newer L2: blast → 81457."""
+        cfg = _cfg(networks=[_net("blast", _contract_instances(_inst("0xABC", 0)))])
+        out = render_ponder_config(cfg)
+        assert "id: 81457" in out
+
+    def test_no_chain_id_zero_for_known_slugs(self):
+        """None of the frontend slugs should produce id: 0 in the config."""
+        for slug in self.FRONTEND_SLUGS:
+            cfg = _cfg(networks=[_net(slug, _contract_instances(_inst("0xABC", 0)))])
+            out = render_ponder_config(cfg)
+            assert "id: 0" not in out, f"Slug '{slug}' produced id: 0"
+
+
+# ── Mixed startBlock behaviour ────────────────────────────────────────────────
+
+class TestMixedStartBlock:
+    """
+    When multiple instances of the same contract on the same chain have
+    mixed startBlock values (some 0, some positive), the contract must
+    start from 0 (i.e. no startBlock emitted) — not from the positive
+    value.  Emitting the positive value would silently miss all events
+    before that block for the zero-start instance.
+    """
+
+    def test_all_zero_startblock_omits_field(self):
+        """When all instances have startBlock=0, no startBlock should be emitted."""
+        cfg = _cfg(networks=[_net("mainnet", _contract_instances(
+            _inst("0xAAA", 0),
+            _inst("0xBBB", 0),
+        ))])
+        out = render_ponder_config(cfg)
+        assert "startBlock" not in out
+
+    def test_all_set_startblock_emits_minimum(self):
+        """When all instances have a non-zero startBlock, emit the minimum."""
+        cfg = _cfg(networks=[_net("mainnet", _contract_instances(
+            _inst("0xAAA", 500_000),
+            _inst("0xBBB", 200_000),
+        ))])
+        out = render_ponder_config(cfg)
+        assert "startBlock: 200000" in out
+
+    def test_mixed_zero_and_positive_omits_startblock(self):
+        """
+        If one instance has startBlock=0 (genesis) and another has a
+        positive startBlock, the effective start is genesis → no
+        startBlock emitted (wrong before: emitted the positive value).
+        """
+        cfg = _cfg(networks=[_net("mainnet", _contract_instances(
+            _inst("0xAAA", 0),           # needs data from genesis
+            _inst("0xBBB", 14_000_000),  # only needs recent data
+        ))])
+        out = render_ponder_config(cfg)
+        # Must NOT emit the positive value — that would miss the genesis instance
+        assert "startBlock: 14000000" not in out
+        assert "startBlock" not in out
+
+    def test_single_instance_positive_startblock_emitted(self):
+        """Single instance with a positive startBlock should still be emitted."""
+        cfg = _cfg(networks=[_net("mainnet", _contract_instances(
+            _inst("0xAAA", 14_265_505),
+        ))])
+        out = render_ponder_config(cfg)
+        assert "startBlock: 14265505" in out
+
+    def test_single_instance_zero_startblock_omitted(self):
+        """Single instance with startBlock=0 should not emit startBlock."""
+        cfg = _cfg(networks=[_net("mainnet", _contract_instances(
+            _inst("0xAAA", 0),
+        ))])
+        out = render_ponder_config(cfg)
+        assert "startBlock" not in out
+

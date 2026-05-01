@@ -28,13 +28,31 @@ import { Plus, Trash2, ChevronDown, ChevronUp, Globe } from 'lucide-react';
 
 // ── Known networks ────────────────────────────────────────────────────────────
 const KNOWN_NETWORKS = [
-  'mainnet', 'goerli', 'sepolia',
-  'optimism', 'optimism-goerli',
-  'arbitrum-one', 'arbitrum-goerli',
-  'polygon', 'mumbai',
-  'base', 'base-goerli',
-  'bnb', 'avalanche',
-  'gnosis',
+  // Ethereum
+  'mainnet', 'sepolia', 'holesky',
+  // Optimism stack
+  'optimism', 'optimism-sepolia',
+  'base', 'base-sepolia',
+  'zora', 'zora-sepolia',
+  'mode', 'mode-sepolia',
+  'blast', 'blast-sepolia',
+  'fraxtal', 'cyber', 'redstone',
+  // Arbitrum
+  'arbitrum-one', 'arbitrum-sepolia',
+  // Polygon
+  'polygon', 'amoy',
+  // BNB / BSC
+  'bnb', 'bsc-testnet',
+  // Others
+  'avalanche', 'fuji',
+  'gnosis', 'gnosis-chiado',
+  'zksync-era', 'zksync-sepolia',
+  'linea', 'linea-sepolia',
+  'scroll', 'scroll-sepolia',
+  'mantle', 'mantle-sepolia',
+  'celo', 'celo-alfajores',
+  'fantom', 'taiko',
+  'metis', 'kava',
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
