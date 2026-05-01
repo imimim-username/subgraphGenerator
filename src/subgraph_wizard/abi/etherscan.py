@@ -248,24 +248,33 @@ def get_supported_networks_for_explorer() -> list[str]:
 
 # ── Deployment block lookup ───────────────────────────────────────────────────
 
+# Networks that are NOT covered by the Etherscan v2 unified API for the
+# getcontractcreation endpoint and must use their own chain-specific API.
+# Each entry maps a Graph network slug to (api_base_url, env_var_for_key).
+_CHAIN_SPECIFIC_APIS: dict[str, tuple[str, str]] = {
+    "optimism": ("https://api-optimistic.etherscan.io/api", "OPTIMISM_ETHERSCAN_API_KEY"),
+}
+
+
 def get_contract_deployment_block(network: str, address: str) -> int | None:
     """Return the block number in which a contract was deployed.
 
-    Uses the Etherscan v2 unified API (one ``ETHERSCAN_API_KEY`` covers all
-    supported chains).  The lookup is a two-step process:
+    For most chains uses the Etherscan v2 unified API (``ETHERSCAN_API_KEY``).
+    Chains listed in ``_CHAIN_SPECIFIC_APIS`` (e.g. Optimism) are NOT covered
+    by the v2 unified endpoint and are queried via their own explorer API with
+    a dedicated env-var key (e.g. ``OPTIMISM_ETHERSCAN_API_KEY``).
 
-    1. ``contract/getcontractcreation`` → creation transaction hash.
-    2. ``proxy/eth_getTransactionByHash``  → block number from the tx.
+    The lookup sequence:
+    1. ``contract/getcontractcreation`` → tx hash + optional blockNumber.
+    1b. Use ``blockNumber`` from the creation response if present.
+    2. ``proxy/eth_getTransactionByHash`` → blockNumber from the tx.
+    3. ``txlistinternal`` / ``txlist`` — reliable L2 fallback.
 
-    Returns ``None`` (rather than raising) when:
-    - ``ETHERSCAN_API_KEY`` is not set in the environment.
-    - The network is not in ``GRAPH_NETWORK_CHAIN_IDS``.
-    - Any network or API error occurs.
-
-    Callers should treat ``None`` as "unknown — keep existing value".
+    Returns ``None`` (rather than raising) when keys are absent, the network
+    is unknown, or all lookup steps fail.
 
     Args:
-        network: Graph-cli network name (e.g. ``"mainnet"``, ``"arbitrum-one"``).
+        network: Graph-cli network name (e.g. ``"mainnet"``, ``"optimism"``).
         address: Contract address (``0x``-prefixed hex string).
 
     Returns:
@@ -273,20 +282,28 @@ def get_contract_deployment_block(network: str, address: str) -> int | None:
     """
     from subgraph_wizard.networks import GRAPH_NETWORK_CHAIN_IDS
 
-    api_key = os.environ.get("ETHERSCAN_API_KEY")
-    if not api_key:
-        logger.debug("ETHERSCAN_API_KEY not set; skipping deployment block lookup")
-        return None
-
     chain_id = GRAPH_NETWORK_CHAIN_IDS.get(network)
     if chain_id is None:
         logger.debug("Network %r not in GRAPH_NETWORK_CHAIN_IDS; skipping lookup", network)
         return None
 
-    base = (
-        f"https://api.etherscan.io/v2/api"
-        f"?chainid={chain_id}&apikey={api_key}"
-    )
+    # Choose API base URL and key depending on whether the chain needs its own
+    # explorer endpoint or can use the unified Etherscan v2 API.
+    if network in _CHAIN_SPECIFIC_APIS:
+        api_base, key_env = _CHAIN_SPECIFIC_APIS[network]
+        api_key = os.environ.get(key_env)
+        if not api_key:
+            logger.debug(
+                "%s not set; skipping deployment block lookup for %s", key_env, network
+            )
+            return None
+        base = f"{api_base}?apikey={api_key}"
+    else:
+        api_key = os.environ.get("ETHERSCAN_API_KEY")
+        if not api_key:
+            logger.debug("ETHERSCAN_API_KEY not set; skipping deployment block lookup")
+            return None
+        base = f"https://api.etherscan.io/v2/api?chainid={chain_id}&apikey={api_key}"
 
     # ── Step 1: get the creation tx hash ─────────────────────────────────────
     try:
@@ -308,74 +325,97 @@ def get_contract_deployment_block(network: str, address: str) -> int | None:
     # Guard against that before indexing into the list.
     creation_result = data.get("result")
     if data.get("status") != "1" or not isinstance(creation_result, list) or not creation_result:
-        logger.debug(
-            "getcontractcreation returned no usable result for %s: %r",
-            address, creation_result,
+        logger.warning(
+            "getcontractcreation returned no usable result for %s on %s: %r",
+            address, network, creation_result,
         )
         return None
 
     first = creation_result[0]
     if not isinstance(first, dict):
-        logger.debug("Unexpected creation result entry type %r for %s", type(first), address)
+        logger.warning(
+            "Unexpected creation result entry type %r for %s on %s",
+            type(first), address, network,
+        )
         return None
 
     tx_hash = first.get("txHash")
     if not tx_hash:
-        logger.debug("No txHash in getcontractcreation result for %s", address)
+        logger.warning("No txHash in getcontractcreation result for %s on %s", address, network)
         return None
 
     # ── Step 1b: prefer blockNumber from the creation response directly ───────
     # The Etherscan v2 API returns blockNumber in the getcontractcreation
-    # payload.  Using it avoids a second round-trip and works reliably on L2s
-    # (e.g. Optimism) where the proxy/eth_getTransactionByHash endpoint is
-    # unreliable or returns no result.  blockNumber may be decimal or hex.
+    # payload.  Using it avoids extra round-trips.  May be decimal or hex.
     block_str = first.get("blockNumber")
     if block_str:
         try:
-            # Try decimal first (Etherscan v2 returns decimal for most chains),
-            # then hex (JSON-RPC proxy style) as a fallback.
-            if str(block_str).startswith("0x"):
-                block = int(block_str, 16)
-            else:
-                block = int(block_str)
-            logger.info(
-                "Auto-detected startBlock %d for %s on %s (from creation tx)",
-                block, address, network,
-            )
-            return block
+            block = int(block_str, 16) if str(block_str).startswith("0x") else int(block_str)
+            if block > 0:
+                logger.info(
+                    "Auto-detected startBlock %d for %s on %s (from creation response)",
+                    block, address, network,
+                )
+                return block
         except (ValueError, TypeError):
             logger.debug("Could not parse blockNumber %r from creation result", block_str)
-            # Fall through to step 2
 
-    # ── Step 2: resolve the block number from the tx (fallback) ───────────────
-    # Only reached when blockNumber was absent from the creation response.
+    # ── Step 2: eth_getTransactionByHash (works for most chains) ─────────────
     try:
         resp = _get(
             f"{base}&module=proxy&action=eth_getTransactionByHash"
             f"&txhash={tx_hash}",
         )
         resp.raise_for_status()
-        data = resp.json()
+        tx_data = resp.json()
+        result = tx_data.get("result")
+        if isinstance(result, dict):
+            block_hex = result.get("blockNumber")
+            if block_hex:
+                block = int(block_hex, 16)
+                logger.info(
+                    "Auto-detected startBlock %d for %s on %s (from tx lookup)",
+                    block, address, network,
+                )
+                return block
+        logger.warning(
+            "eth_getTransactionByHash returned no blockNumber for tx %s on %s: %r",
+            tx_hash, network, result,
+        )
     except Exception as exc:
-        logger.warning("Failed to fetch tx %s for block lookup: %s", tx_hash, exc)
-        return None
+        logger.warning("eth_getTransactionByHash failed for tx %s on %s: %s", tx_hash, network, exc)
 
-    result = data.get("result")
-    if not isinstance(result, dict):
-        logger.debug("eth_getTransactionByHash result is not a dict: %r", result)
-        return None
-    block_hex = result.get("blockNumber")
-    if not block_hex:
-        logger.debug("No blockNumber in tx result for %s", tx_hash)
-        return None
+    # ── Step 3: txlistinternal — reliable fallback for L2 chains (e.g. Optimism)
+    # On chains like Optimism, contracts deployed via L1→L2 deposit messages have
+    # synthetic tx hashes that the proxy module cannot resolve.  The txlistinternal
+    # endpoint queries the chain's own transaction index and reliably returns the
+    # creation block as a decimal string.
+    for action in ("txlistinternal", "txlist"):
+        try:
+            resp = _get(
+                f"{base}&module=account&action={action}"
+                f"&address={address}&startblock=0&endblock=99999999"
+                f"&page=1&offset=1&sort=asc",
+            )
+            resp.raise_for_status()
+            list_data = resp.json()
+            if list_data.get("status") == "1":
+                txs = list_data.get("result", [])
+                if txs and isinstance(txs[0], dict):
+                    block_str = txs[0].get("blockNumber", "")
+                    if block_str:
+                        block = int(block_str)  # txlist returns decimal
+                        logger.info(
+                            "Auto-detected startBlock %d for %s on %s (via %s)",
+                            block, address, network, action,
+                        )
+                        return block
+            logger.debug("%s returned no results for %s on %s", action, address, network)
+        except Exception as exc:
+            logger.warning("%s fallback failed for %s on %s: %s", action, address, network, exc)
 
-    try:
-        block = int(block_hex, 16)
-    except (ValueError, TypeError):
-        logger.debug("Could not parse blockNumber %r as hex int", block_hex)
-        return None
-
-    logger.info(
-        "Auto-detected startBlock %d for %s on %s", block, address, network
+    logger.warning(
+        "Could not auto-detect startBlock for %s on %s after all methods exhausted",
+        address, network,
     )
-    return block
+    return None
