@@ -705,29 +705,33 @@ postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
 
 ### 2c — Verify the connection before continuing
 
-Test that you can actually connect with the new user before setting up `.env.local`:
+Test that you can actually connect with the new user **before** setting up `.env.local`
+or running Ponder.  This catches credential problems early:
 
 ```bash
-psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable"
+psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder"
 ```
 
+Replace `yourpassword` with the actual password you chose in `CREATE USER`.
 You should see a prompt like `ponder=>`.  Type `\\q` to exit.
 
-If you get **"Connection refused"** → PostgreSQL is not running.  Start it:
+If the connection fails, diagnose with:
+
 ```bash
-sudo systemctl start postgresql
+# See exactly why PostgreSQL rejected the connection
+sudo journalctl -u postgresql -n 20
 ```
 
-If you get **"password authentication failed"** → the password in the URL doesn't
-match what you used in `CREATE USER`.  Re-run:
-```bash
-sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'yournewpassword';"
-```
+Common outcomes:
 
-If you get **"database does not exist"** → the database wasn't created.  Re-run:
-```bash
-sudo -u postgres psql -c "CREATE DATABASE ponder;" -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;"
-```
+| psql error | Cause | Fix |
+|---|---|---|
+| `Connection refused` | PostgreSQL not running | `sudo systemctl start postgresql` |
+| `password authentication failed` | Wrong password in URL | `sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'new';"` |
+| `database "ponder" does not exist` | DB not created | `sudo -u postgres psql -c "CREATE DATABASE ponder;"` |
+| `role "ponder_user" does not exist` | User not created | Re-run Step 2b |
+
+Do not proceed to Step 3 until `psql` connects successfully.
 
 ### 2c — Create `.env.local`
 
@@ -1040,20 +1044,56 @@ Example:
 → Set `DATABASE_URL` in your `.env.local` file (or your deployment platform's
   environment variable dashboard).
 
-**`Connection terminated unexpectedly`** (repeats several times then exits)
-→ The Node.js PostgreSQL driver is being rejected during the SSL handshake.
-  Add `?sslmode=disable` to the end of your `DATABASE_URL`:
-  ```
-  DATABASE_URL=postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable
-  ```
-  Also check that PostgreSQL is actually running:
+**`Connection terminated unexpectedly`** (repeats 5 times with increasing delays, then exits)
+→ Ponder established a TCP connection to PostgreSQL but PostgreSQL immediately
+  closed it.  This is **not** an SSL issue — Ponder already disables SSL
+  internally.  Follow this diagnostic checklist in order:
+
+  **Step A — Confirm PostgreSQL is running:**
   ```bash
   sudo systemctl status postgresql
-  sudo systemctl start postgresql   # if it shows "inactive"
   ```
-  Then verify the credentials work:
+  If the output says `inactive` or `failed`, start it:
   ```bash
-  psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder?sslmode=disable"
+  sudo systemctl start postgresql
+  ```
+  Then try `pnpm start` again.
+
+  **Step B — Read the PostgreSQL rejection reason:**
+  ```bash
+  sudo journalctl -u postgresql -n 30
+  ```
+  Look for lines like `FATAL:` — they tell you exactly why the connection was
+  rejected (wrong password, database doesn't exist, access denied, etc.).
+
+  **Step C — Test the credentials directly:**
+  ```bash
+  psql "postgresql://ponder_user:yourpassword@localhost:5432/ponder"
+  ```
+  Replace `yourpassword` with the actual password you used in `CREATE USER`.
+  - If this succeeds (you get a `ponder=>` prompt) → PostgreSQL is fine,
+    but there may be a `DATABASE_URL` typo in `.env.local`.  Double-check
+    the password matches exactly.
+  - If you get **"password authentication failed"** → the password is wrong.
+    Reset it:
+    ```bash
+    sudo -u postgres psql -c "ALTER USER ponder_user WITH PASSWORD 'newpassword';"
+    ```
+    Then update `DATABASE_URL` in `.env.local` with the new password.
+  - If you get **"database ponder does not exist"** → recreate it:
+    ```bash
+    sudo -u postgres psql -c "CREATE DATABASE ponder;"
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder_user;"
+    ```
+  - If you get **"connection refused"** → PostgreSQL is not running.
+    See Step A.
+
+  **Step D — Check `.env.local` is being read:**
+  Ponder reads `.env.local`, not `.env`.  Confirm the file exists in the
+  project root:
+  ```bash
+  ls -la .env.local
+  cat .env.local   # verify DATABASE_URL and DATABASE_SCHEMA are present
   ```
 
 **`SyntaxError` in generated handler code**
