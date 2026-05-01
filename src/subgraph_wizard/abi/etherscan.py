@@ -248,24 +248,153 @@ def get_supported_networks_for_explorer() -> list[str]:
 
 # ── Deployment block lookup ───────────────────────────────────────────────────
 
+# Networks that are NOT covered by the Etherscan v2 unified API for the
+# getcontractcreation endpoint and must use their own chain-specific API.
+# Each entry maps a Graph network slug to (api_base_url, env_var_for_key).
+# Optimism is intentionally NOT listed here — the unified key is tried first
+# and the RPC fallback (step 4) handles it when Etherscan fails.
+_CHAIN_SPECIFIC_APIS: dict[str, tuple[str, str]] = {}
+
+# Alchemy RPC base URLs per Graph network slug.
+# The full endpoint is  {base}{RPC_API_KEY}.
+# Used as a final fallback when all Etherscan lookups fail.
+_ALCHEMY_RPC_BASES: dict[str, str] = {
+    "mainnet":       "https://eth-mainnet.g.alchemy.com/v2/",
+    "optimism":      "https://opt-mainnet.g.alchemy.com/v2/",
+    "arbitrum-one":  "https://arb-mainnet.g.alchemy.com/v2/",
+    "base":          "https://base-mainnet.g.alchemy.com/v2/",
+    "polygon":       "https://polygon-mainnet.g.alchemy.com/v2/",
+    "bnb":           "https://bnb-mainnet.g.alchemy.com/v2/",
+    "avalanche":     "https://avax-mainnet.g.alchemy.com/v2/",
+    "gnosis":        "https://gnosis-mainnet.g.alchemy.com/v2/",
+    "zksync-era":    "https://zksync-mainnet.g.alchemy.com/v2/",
+    "linea":         "https://linea-mainnet.g.alchemy.com/v2/",
+    "scroll":        "https://scroll-mainnet.g.alchemy.com/v2/",
+    "sepolia":       "https://eth-sepolia.g.alchemy.com/v2/",
+}
+
+
+def _rpc_get_tx_block(rpc_url: str, tx_hash: str) -> int | None:
+    """Call ``eth_getTransactionByHash`` on a JSON-RPC endpoint.
+
+    Uses a direct POST (bypassing the Etherscan rate limiter) since this
+    targets a different service.  Returns the block number as an integer,
+    or ``None`` on any failure.
+    """
+    try:
+        r = requests.post(
+            rpc_url,
+            json={"jsonrpc": "2.0", "method": "eth_getTransactionByHash",
+                  "params": [tx_hash], "id": 1},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        result = r.json().get("result") or {}
+        block_hex = result.get("blockNumber") if isinstance(result, dict) else None
+        if block_hex:
+            return int(block_hex, 16)
+    except Exception as exc:
+        logger.debug("RPC eth_getTransactionByHash failed for %s: %s", tx_hash, exc)
+    return None
+
+
+def _rpc_find_deployment_block(rpc_url: str, address: str) -> int | None:
+    """Find the deployment block via ``eth_getCode`` binary search.
+
+    Used when no transaction hash is available (e.g. Etherscan refused the
+    request entirely).  Makes O(log(latest_block)) RPC calls — typically
+    ~27 calls for mainnet, ~30 for Optimism.  Each call is a fast JSON-RPC
+    POST so the total latency is usually under 5 seconds.
+
+    Args:
+        rpc_url: Full Alchemy (or compatible) JSON-RPC endpoint URL.
+        address: Contract address to locate.
+
+    Returns:
+        The first block number where ``eth_getCode`` returns non-empty
+        bytecode, or ``None`` on any failure.
+    """
+    # ── Get latest block number to establish the search ceiling ──────────────
+    try:
+        r = requests.post(
+            rpc_url,
+            json={"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        hi_hex = r.json().get("result")
+        if not hi_hex:
+            return None
+        hi = int(hi_hex, 16)
+    except Exception as exc:
+        logger.debug("eth_blockNumber failed during binary search for %s: %s", address, exc)
+        return None
+
+    # ── Binary search ─────────────────────────────────────────────────────────
+    lo = 0
+    while lo < hi:
+        mid = (lo + hi) // 2
+        try:
+            r = requests.post(
+                rpc_url,
+                json={"jsonrpc": "2.0", "method": "eth_getCode",
+                      "params": [address, hex(mid)], "id": 1},
+                timeout=REQUEST_TIMEOUT,
+            )
+            r.raise_for_status()
+            code = r.json().get("result", "0x") or "0x"
+        except Exception as exc:
+            logger.debug("eth_getCode at block %d failed during binary search: %s", mid, exc)
+            return None
+        if code != "0x":
+            hi = mid
+        else:
+            lo = mid + 1
+
+    # ── Verify the candidate block ────────────────────────────────────────────
+    try:
+        r = requests.post(
+            rpc_url,
+            json={"jsonrpc": "2.0", "method": "eth_getCode",
+                  "params": [address, hex(lo)], "id": 1},
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        code = r.json().get("result", "0x") or "0x"
+        if code != "0x":
+            return lo
+    except Exception as exc:
+        logger.debug("eth_getCode verification at block %d failed: %s", lo, exc)
+    return None
+
+
 def get_contract_deployment_block(network: str, address: str) -> int | None:
     """Return the block number in which a contract was deployed.
 
-    Uses the Etherscan v2 unified API (one ``ETHERSCAN_API_KEY`` covers all
-    supported chains).  The lookup is a two-step process:
+    Uses a four-step fallback chain so that temporary or permanent failures
+    at any individual step still give later steps a chance to succeed.
 
-    1. ``contract/getcontractcreation`` → creation transaction hash.
-    2. ``proxy/eth_getTransactionByHash``  → block number from the tx.
+    Steps:
+    1.  ``getcontractcreation`` (Etherscan v2 unified API) → tx hash + optional
+        ``blockNumber``.  A non-"1" status (e.g. "Free API access not supported
+        for this chain") is logged as a warning but does **not** abort — the
+        function continues to steps 3 and 4.
+    1b. If the creation response includes a valid ``blockNumber``, return it
+        immediately (saves two extra round-trips).
+    2.  ``proxy/eth_getTransactionByHash`` — only attempted when a tx hash is
+        available from step 1.
+    3.  ``txlistinternal`` then ``txlist`` — need only the contract address, so
+        they work even when step 1 fails entirely.  A tx hash found here is
+        saved for use by step 4 if needed.
+    4.  RPC fallback via Alchemy (``RPC_API_KEY``):
+        a. ``eth_getTransactionByHash`` if a tx hash was obtained in steps 1–3.
+        b. ``eth_getCode`` binary search — works with no tx hash at all.
 
-    Returns ``None`` (rather than raising) when:
-    - ``ETHERSCAN_API_KEY`` is not set in the environment.
-    - The network is not in ``GRAPH_NETWORK_CHAIN_IDS``.
-    - Any network or API error occurs.
-
-    Callers should treat ``None`` as "unknown — keep existing value".
+    Returns ``None`` (rather than raising) when all API keys are absent, the
+    network is unknown, or every step fails.
 
     Args:
-        network: Graph-cli network name (e.g. ``"mainnet"``, ``"arbitrum-one"``).
+        network: Graph-cli network name (e.g. ``"mainnet"``, ``"optimism"``).
         address: Contract address (``0x``-prefixed hex string).
 
     Returns:
@@ -273,85 +402,204 @@ def get_contract_deployment_block(network: str, address: str) -> int | None:
     """
     from subgraph_wizard.networks import GRAPH_NETWORK_CHAIN_IDS
 
-    api_key = os.environ.get("ETHERSCAN_API_KEY")
-    if not api_key:
-        logger.debug("ETHERSCAN_API_KEY not set; skipping deployment block lookup")
-        return None
-
     chain_id = GRAPH_NETWORK_CHAIN_IDS.get(network)
     if chain_id is None:
         logger.debug("Network %r not in GRAPH_NETWORK_CHAIN_IDS; skipping lookup", network)
         return None
 
-    base = (
-        f"https://api.etherscan.io/v2/api"
-        f"?chainid={chain_id}&apikey={api_key}"
+    # ── Resolve Etherscan API base (may be None if no key is configured) ─────
+    etherscan_base: str | None = None
+    if network in _CHAIN_SPECIFIC_APIS:
+        api_base, key_env = _CHAIN_SPECIFIC_APIS[network]
+        specific_key = os.environ.get(key_env)
+        if specific_key:
+            etherscan_base = f"{api_base}?apikey={specific_key}"
+        else:
+            logger.debug("%s not set; Etherscan steps skipped for %s", key_env, network)
+    else:
+        unified_key = os.environ.get("ETHERSCAN_API_KEY")
+        if unified_key:
+            etherscan_base = (
+                f"https://api.etherscan.io/v2/api"
+                f"?chainid={chain_id}&apikey={unified_key}"
+            )
+        else:
+            logger.debug("ETHERSCAN_API_KEY not set; Etherscan steps skipped")
+
+    # ── Resolve RPC URL (may be None if no key / no base for this network) ───
+    rpc_api_key = os.environ.get("RPC_API_KEY")
+    rpc_base = _ALCHEMY_RPC_BASES.get(network)
+    rpc_url: str | None = (
+        f"{rpc_base}{rpc_api_key}" if (rpc_api_key and rpc_base) else None
     )
 
-    # ── Step 1: get the creation tx hash ─────────────────────────────────────
-    try:
-        resp = _get(
-            f"{base}&module=contract&action=getcontractcreation"
-            f"&contractaddresses={address}",
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logger.warning(
-            "Failed to fetch contract creation info for %s on %s: %s",
-            address, network, exc,
-        )
-        return None
-
-    # Etherscan occasionally returns status "1" with a string result (e.g. rate-limit
-    # messages like "Max rate limit reached") instead of the expected list.
-    # Guard against that before indexing into the list.
-    creation_result = data.get("result")
-    if data.get("status") != "1" or not isinstance(creation_result, list) or not creation_result:
+    # Nothing can be done without at least one key
+    if not etherscan_base and not rpc_url:
         logger.debug(
-            "getcontractcreation returned no usable result for %s: %r",
-            address, creation_result,
+            "No API keys available; skipping deployment block lookup for %s on %s",
+            address, network,
         )
         return None
 
-    first = creation_result[0]
-    if not isinstance(first, dict):
-        logger.debug("Unexpected creation result entry type %r for %s", type(first), address)
-        return None
+    tx_hash: str | None = None  # accumulated across steps for later use
 
-    tx_hash = first.get("txHash")
-    if not tx_hash:
-        logger.debug("No txHash in getcontractcreation result for %s", address)
-        return None
+    # ── Steps 1, 1b, 2, 3: Etherscan path ────────────────────────────────────
+    if etherscan_base:
+        # ── Step 1: getcontractcreation ──────────────────────────────────────
+        step1_ok = False
+        try:
+            resp = _get(
+                f"{etherscan_base}&module=contract&action=getcontractcreation"
+                f"&contractaddresses={address}",
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            creation_result = data.get("result")
 
-    # ── Step 2: resolve the block number from the tx ──────────────────────────
-    try:
-        resp = _get(
-            f"{base}&module=proxy&action=eth_getTransactionByHash"
-            f"&txhash={tx_hash}",
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logger.warning("Failed to fetch tx %s for block lookup: %s", tx_hash, exc)
-        return None
+            if (
+                data.get("status") == "1"
+                and isinstance(creation_result, list)
+                and creation_result
+            ):
+                first = creation_result[0]
+                if isinstance(first, dict):
+                    tx_hash = first.get("txHash") or None
+                    step1_ok = bool(tx_hash)
 
-    result = data.get("result")
-    if not isinstance(result, dict):
-        logger.debug("eth_getTransactionByHash result is not a dict: %r", result)
-        return None
-    block_hex = result.get("blockNumber")
-    if not block_hex:
-        logger.debug("No blockNumber in tx result for %s", tx_hash)
-        return None
+                    # ── Step 1b: blockNumber in the creation payload ──────────
+                    block_str = first.get("blockNumber")
+                    if block_str:
+                        try:
+                            block = (
+                                int(block_str, 16)
+                                if str(block_str).startswith("0x")
+                                else int(block_str)
+                            )
+                            if block > 0:
+                                logger.info(
+                                    "Auto-detected startBlock %d for %s on %s"
+                                    " (from creation response)",
+                                    block, address, network,
+                                )
+                                return block
+                        except (ValueError, TypeError):
+                            logger.debug(
+                                "Could not parse blockNumber %r from creation result",
+                                block_str,
+                            )
+            else:
+                logger.warning(
+                    "getcontractcreation returned no usable result for %s on %s: %r",
+                    address, network, creation_result,
+                )
+                # Non-fatal — continue to steps 2-4
 
-    try:
-        block = int(block_hex, 16)
-    except (ValueError, TypeError):
-        logger.debug("Could not parse blockNumber %r as hex int", block_hex)
-        return None
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch contract creation info for %s on %s: %s",
+                address, network, exc,
+            )
+            # Non-fatal — continue to steps 2-4
 
-    logger.info(
-        "Auto-detected startBlock %d for %s on %s", block, address, network
+        # ── Step 2: eth_getTransactionByHash ─────────────────────────────────
+        # Only worthwhile when step 1 gave us a tx hash.
+        if step1_ok and tx_hash:
+            try:
+                resp = _get(
+                    f"{etherscan_base}&module=proxy&action=eth_getTransactionByHash"
+                    f"&txhash={tx_hash}",
+                )
+                resp.raise_for_status()
+                tx_data = resp.json()
+                result = tx_data.get("result")
+                if isinstance(result, dict):
+                    block_hex = result.get("blockNumber")
+                    if block_hex:
+                        block = int(block_hex, 16)
+                        logger.info(
+                            "Auto-detected startBlock %d for %s on %s (from tx lookup)",
+                            block, address, network,
+                        )
+                        return block
+                logger.warning(
+                    "eth_getTransactionByHash returned no blockNumber for tx %s on %s: %r",
+                    tx_hash, network, result,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "eth_getTransactionByHash failed for tx %s on %s: %s",
+                    tx_hash, network, exc,
+                )
+
+        # ── Step 3: txlistinternal / txlist ───────────────────────────────────
+        # These only need the contract address — no tx hash required.  They
+        # work even when step 1 failed entirely (e.g. "Free API access not
+        # supported for this chain").
+        for action in ("txlistinternal", "txlist"):
+            try:
+                resp = _get(
+                    f"{etherscan_base}&module=account&action={action}"
+                    f"&address={address}&startblock=0&endblock=99999999"
+                    f"&page=1&offset=1&sort=asc",
+                )
+                resp.raise_for_status()
+                list_data = resp.json()
+                if list_data.get("status") == "1":
+                    txs = list_data.get("result", [])
+                    if txs and isinstance(txs[0], dict):
+                        # Always capture the hash for the RPC fallback (step 4a),
+                        # even when blockNumber is absent — it may still help.
+                        if not tx_hash:
+                            tx_hash = txs[0].get("hash") or None
+                        block_str = txs[0].get("blockNumber", "")
+                        if block_str:
+                            block = int(block_str)  # txlist returns decimal strings
+                            logger.info(
+                                "Auto-detected startBlock %d for %s on %s (via %s)",
+                                block, address, network, action,
+                            )
+                            return block
+                logger.debug("%s returned no results for %s on %s", action, address, network)
+            except Exception as exc:
+                logger.warning(
+                    "%s fallback failed for %s on %s: %s", action, address, network, exc
+                )
+
+    # ── Step 4: RPC fallback ──────────────────────────────────────────────────
+    # Tried when (a) Etherscan steps all failed, or (b) no Etherscan key was
+    # configured at all.  Two sub-steps:
+    #   4a. eth_getTransactionByHash — fast single call if we have a tx hash.
+    #   4b. eth_getCode binary search — works with no tx hash at all.
+    if rpc_url:
+        if tx_hash:
+            block = _rpc_get_tx_block(rpc_url, tx_hash)
+            if block is not None:
+                logger.info(
+                    "Auto-detected startBlock %d for %s on %s (via RPC tx lookup)",
+                    block, address, network,
+                )
+                return block
+
+        # Binary search: no tx hash needed — only address + RPC endpoint.
+        block = _rpc_find_deployment_block(rpc_url, address)
+        if block is not None:
+            logger.info(
+                "Auto-detected startBlock %d for %s on %s (via RPC binary search)",
+                block, address, network,
+            )
+            return block
+
+        logger.warning("RPC fallback also failed for %s on %s", address, network)
+    else:
+        if not rpc_api_key:
+            logger.debug(
+                "RPC_API_KEY not set; RPC fallback skipped for %s on %s", address, network
+            )
+        else:
+            logger.debug("No Alchemy RPC base configured for network %r", network)
+
+    logger.warning(
+        "Could not auto-detect startBlock for %s on %s after all methods exhausted",
+        address, network,
     )
-    return block
+    return None

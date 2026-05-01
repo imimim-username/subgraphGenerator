@@ -1,11 +1,13 @@
 
 # Subgraph Generator
 
-A visual drag-and-drop tool for building [The Graph](https://thegraph.com/) subgraphs.
-Wire together nodes on a canvas to describe what on-chain data you want to index, then click
-**Generate** — the tool writes all your AssemblyScript mapping files, `schema.graphql`,
-`subgraph.yaml`, `networks.json`, `package.json` (with codegen/build/deploy npm scripts),
-and `howto.md` (a step-by-step deployment guide to The Graph Studio) automatically.
+A visual drag-and-drop tool for building blockchain indexers — targeting either
+[The Graph](https://thegraph.com/) (AssemblyScript subgraphs) or
+[Ponder](https://ponder.sh/) (TypeScript indexers).
+
+Wire together nodes on a canvas to describe what on-chain data you want to index, choose an
+output mode, then click **Generate** — the tool writes all the necessary source files
+automatically.
 
 ---
 
@@ -26,13 +28,13 @@ The canvas opens in your browser. From there:
 2. Drop an **Entity** node → wire an event output port (amber) to the entity's `evt` input port.
    Fields populate automatically from the event's parameters.
 3. Open the **Networks** panel → add the deployed contract address and start block.
-4. Type a subgraph name and click **Generate**. A directory-picker modal opens — choose where
+4. Choose an **output mode** with the toggle in the toolbar: **The Graph** or **Ponder**.
+5. Type a project name and click **Generate**. A directory-picker modal opens — choose where
    to write the files (type a path or browse the server filesystem). Click **Generate** in
    the modal to confirm.
 
-The output files are written to the chosen directory. Open a terminal there and run
-`npm install && npm run codegen && npm run build` to compile. See the generated `howto.md`
-for the full deployment walkthrough.
+The output files are written to the chosen directory. See the generated `howto.md` /
+`PONDER_HOWTO.md` for the full deployment walkthrough.
 
 **CLI flags:**
 
@@ -130,6 +132,19 @@ by name with `graph deploy`.
 
 ---
 
+## Output mode
+
+Switch between two indexing targets using the **Output mode** toggle in the toolbar:
+
+| Mode | Runtime | Language | Notes |
+|---|---|---|---|
+| **The Graph** | Hosted/decentralised Graph node | AssemblyScript | Classic subgraph — `subgraph.yaml`, `schema.graphql`, AS mappings |
+| **Ponder** | Self-hosted Node.js process | TypeScript | Multi-chain, real-time GraphQL API out of the box |
+
+The same canvas works for both modes — switch at any time.
+
+---
+
 ## Generate
 
 Click **Generate** in the toolbar to open the directory-picker modal. The modal has two modes:
@@ -139,7 +154,7 @@ Click **Generate** in the toolbar to open the directory-picker modal. The modal 
 | **Type path** (default) | Free-form monospace text input. Type or paste any absolute path. Press `Enter` or click Generate to confirm. Press `Escape` or click outside to cancel. |
 | **Browse…** | Server-backed filesystem navigator. Click folders to descend into them; use the ↑ button to go up; click the folder-plus icon to create a new subdirectory. Click **Type path** to return to manual entry. |
 
-**Output files written to the chosen directory:**
+### The Graph output files
 
 | File | Description |
 |---|---|
@@ -149,6 +164,34 @@ Click **Generate** in the toolbar to open the directory-picker modal. The modal 
 | `src/mappings/{Contract}.ts` | Compiled AssemblyScript handlers |
 | `package.json` | npm scripts: `codegen`, `build`, `deploy` |
 | `howto.md` | Step-by-step deployment guide to The Graph Studio |
+
+### Ponder output files
+
+| File | Description |
+|---|---|
+| `ponder.config.ts` | Chain RPC config, contract addresses, start blocks |
+| `ponder.schema.ts` | Typed database schema (one `onchainTable` per entity) |
+| `src/index.ts` | TypeScript event handler functions |
+| `src/api/index.ts` | Hono HTTP app; mounts `/graphql` and `/` GraphQL endpoints |
+| `ponder-env.d.ts` | Auto-generated Ponder environment typings |
+| `tsconfig.json` | TypeScript project config |
+| `package.json` | `pnpm dev`, `pnpm start`, `pnpm codegen` scripts |
+| `.env.example` | RPC URL placeholders (one per chain) |
+| `PONDER_HOWTO.md` | Step-by-step guide to running and deploying the indexer |
+
+#### Ponder-specific behaviour
+
+- **Multi-chain, one indexer.** Every network in the Networks panel is indexed simultaneously
+  in a single Ponder process.
+- **Auto `chain` field.** A `chain: text().notNull()` column is automatically added to every
+  entity table. Every insert sets it to `context.chain.name` so you can filter data by chain.
+- **Suffix-retry inserts.** Ponder rejects duplicate primary keys. The generated handlers retry
+  with a `-1`, `-2`, … suffix when the ID already exists so no event is silently dropped.
+- **GraphQL at `/graphql`.** Since Ponder 0.8 the GraphQL API must be explicitly mounted.
+  The generated `src/api/index.ts` mounts `graphql({ db, schema })` at both `/graphql` and
+  `/` so both the API and the GraphiQL playground are accessible.
+- **Database.** Defaults to PGlite (zero-config, embedded). Switch to PostgreSQL in the
+  Generate modal (Ponder Settings section) or edit `ponder.config.ts` directly.
 
 The Generate button is disabled while validation errors (red outlines) exist.
 
@@ -269,9 +312,11 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 ## Tests
 
 ```bash
-pytest          # 147 tests
+pytest          # 1119+ tests
 pytest -v
 pytest tests/test_validator.py
+pytest tests/test_ponder_config.py
+pytest tests/test_ponder_compiler.py
 pytest tests/test_server.py
 ```
 

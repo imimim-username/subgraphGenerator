@@ -13,29 +13,26 @@ The goal is to give new contributors (including “future you”) a clear mental
 
 ## 1. High-Level Overview
 
-**Subgraph Wizard** is a Python-based tool that generates fully structured subgraph projects for The Graph.
+**Subgraph Wizard** is a Python-based tool that generates fully structured blockchain indexer
+projects. It supports two output targets:
 
-There are two main usage modes:
+1. **The Graph** — AssemblyScript subgraphs deployed to a Graph node.
+2. **Ponder** — TypeScript indexers that run as a self-hosted Node.js process.
 
-1. **Interactive wizard** – walks the user through questions (network, contracts, ABI, mapping style, etc.)  
-2. **Config-driven generation** – reads a `subgraph-config.json` file and generates a subgraph non-interactively.
+There are also two usage surfaces:
 
-The output is a subgraph project folder containing:
-
-- `subgraph.yaml`
-- `schema.graphql`
-- Mapping handlers (`src/mappings/*.ts`)
-- `abis/*.json`
-- `package.json`
-- A generated README for the subgraph
+1. **Visual editor** (primary) – a browser-based drag-and-drop canvas. Wire contract events to
+   entity nodes, open the Networks panel to add deployed addresses, and click Generate.
+2. **CLI / config-driven** – reads a `subgraph-config.json` and generates without a browser.
 
 The architecture is organized around the following core concepts:
 
-- **Config model** – how subgraphs are described as data
+- **Visual editor** – React + React Flow canvas + FastAPI backend (`server.py`)
+- **Config model** – how indexers are described as data
 - **ABI acquisition** – how contract ABIs are obtained
-- **Generators** – how config + ABIs are turned into files
-- **Templates** – text/graphQL/TypeScript templates used by generators
-- **CLI / Wizard** – user interaction and entry points
+- **Generators** – how the canvas state is turned into output files
+- **Templates** – Jinja2 text templates used by CLI generators
+- **CLI / Wizard** – terminal interaction and entry points
 
 ---
 
@@ -44,6 +41,23 @@ The architecture is organized around the following core concepts:
 ```text
 subgraph-wizard/
 ├── .env.example
+├── frontend/                         ← React + Vite visual editor
+│   └── src/
+│       ├── App.jsx                   ← root; canvas state, payload builder
+│       ├── nodes/                    ← React Flow node components
+│       │   ├── ContractNode.jsx
+│       │   ├── EntityNode.jsx
+│       │   ├── AggregateEntityNode.jsx
+│       │   ├── MathNode.jsx
+│       │   ├── TypeCastNode.jsx
+│       │   ├── StringConcatNode.jsx
+│       │   ├── ConditionalNode.jsx
+│       │   └── ContractReadNode.jsx
+│       └── components/
+│           ├── GenerateModal.jsx     ← directory picker + Ponder settings
+│           ├── NetworksPanel.jsx     ← addresses, start/end blocks, advanced opts
+│           ├── HelpPanel.jsx
+│           └── LibraryPanel.jsx
 ├── src/
 │   └── subgraph_wizard/
 │       ├── __init__.py
@@ -53,6 +67,7 @@ subgraph-wizard/
 │       ├── interactive_wizard.py
 │       ├── networks.py
 │       ├── logging_setup.py
+│       ├── server.py                 ← FastAPI app; /api/* routes; visual editor backend
 │       ├── config/
 │       │   ├── __init__.py
 │       │   ├── model.py
@@ -62,18 +77,23 @@ subgraph-wizard/
 │       │   ├── __init__.py
 │       │   ├── local.py
 │       │   ├── paste.py
-│       │   ├── etherscan.py
+│       │   ├── etherscan.py          ← Etherscan ABI + deployment block lookup
 │       │   └── utils.py
 │       ├── generate/
 │       │   ├── __init__.py
-│       │   ├── orchestrator.py
+│       │   ├── orchestrator.py       ← CLI generation pipeline
 │       │   ├── project_layout.py
 │       │   ├── subgraph_yaml.py
 │       │   ├── schema.py
 │       │   ├── mappings_stub.py
 │       │   ├── mappings_auto.py
 │       │   ├── package_json.py
-│       │   └── readme.py
+│       │   ├── readme.py
+│       │   ├── validator.py          ← canvas graph validation (visual editor)
+│       │   ├── compiler.py           ← The Graph AS compiler (visual editor)
+│       │   ├── ponder_config.py      ← Ponder config + boilerplate files
+│       │   ├── ponder_schema.py      ← ponder.schema.ts generator
+│       │   └── ponder_compiler.py    ← src/index.ts handler compiler
 │       └── utils/
 │           ├── fs_utils.py
 │           ├── templating.py
@@ -240,7 +260,87 @@ Provide a consistent way to obtain ABI JSON regardless of the source.
 
 ---
 
-### 4.5 Generation Layer (`generate/`)
+### 4.5 Visual Editor Backend (`server.py`)
+
+The FastAPI server (`server.py`) is the bridge between the React frontend and the
+generation layer.
+
+Key routes:
+
+| Route | Description |
+|---|---|
+| `GET /api/health` | Health check |
+| `POST /api/abi/parse` | Parse a raw ABI JSON string |
+| `POST /api/abi/fetch` | Fetch ABI from Etherscan |
+| `GET /api/config` | Load `visual-config.json` from disk |
+| `POST /api/config` | Save `visual-config.json` to disk |
+| `POST /api/validate` | Run `validator.py` against the canvas; returns issues list |
+| `POST /api/generate` | Compile canvas → output files; write to chosen directory |
+| `GET /api/fs/browse` | List subdirectories for the directory picker |
+| `POST /api/fs/mkdir` | Create a directory |
+
+The `POST /api/generate` handler inspects `output_mode` in the payload. When it is
+`"ponder"`, it calls the Ponder pipeline instead of the The Graph pipeline.
+
+---
+
+### 4.5a Ponder Generation Pipeline
+
+The Ponder pipeline is invoked by `server.py` when `output_mode == "ponder"`:
+
+```
+VisualConfig (canvas JSON)
+        │
+        ├─► ponder_config.py → ponder.config.ts, ponder-env.d.ts,
+        │                       src/api/index.ts, tsconfig.json,
+        │                       package.json, .env.example,
+        │                       PONDER_HOWTO.md
+        │
+        ├─► ponder_schema.py → ponder.schema.ts
+        │       (one onchainTable per entity / aggregate entity node;
+        │        auto-injects chain: t.text().notNull() after id)
+        │
+        └─► ponder_compiler.py → src/index.ts
+                (ponder.on("Contract:Event", ...) handlers;
+                 auto-inserts chain: context.chain.name;
+                 suffix-retry loop for duplicate IDs;
+                 setup handler stubs when hasSetupHandler is set)
+```
+
+#### `generate/ponder_config.py`
+
+- `render_ponder_config` — Builds `ponder.config.ts` with `createConfig({ chains, contracts })`.
+  Reads `ponder_settings` from the canvas for database choice and ordering mode.
+  Reads per-contract flags (`endBlock`, `includeCallTraces`, `includeTransactionReceipts`) from
+  contract node data. Reads per-chain advanced options (`pollingInterval`, `maxBlockRange`) from
+  network entries. Auto-detects `startBlock` via Etherscan when `startBlock == 0` and a real
+  address is available.
+- `render_ponder_api_index` — Generates `src/api/index.ts` with a Hono app that mounts
+  `graphql({ db, schema })` at `/graphql` and `/` (Ponder 0.8+ requirement — the GraphQL
+  endpoint is no longer automatic).
+- `render_ponder_howto` — Generates `PONDER_HOWTO.md`, a step-by-step guide tailored to the
+  canvas settings (database choice, chains, ordering mode, setup handlers).
+
+#### `generate/ponder_schema.py`
+
+Converts entity and aggregate entity nodes into `ponder.schema.ts` using Ponder's
+`onchainTable` / `index` / `primaryKey` DSL. Auto-injects `chain: t.text().notNull()` after
+the `id` column so every table can be filtered by source chain.
+
+#### `generate/ponder_compiler.py`
+
+Converts the canvas wiring into TypeScript `ponder.on(...)` event handler functions:
+
+- Imports the correct ABI and Ponder helpers.
+- Reads field wires to build `{ id, chain, ...fields }` insert objects.
+- Emits a suffix-retry loop (`-1`, `-2`, …) so duplicate IDs never crash a handler.
+- Emits aggregate upsert blocks with `createOrReplace` / `update` logic.
+- Emits `:setup` handler stubs for contracts with `hasSetupHandler` checked.
+- Sets `chain: context.chain.name` (Ponder 0.8+; previously `context.network.name`).
+
+---
+
+### 4.6 Generation Layer (`generate/`)
 
 The generation layer takes the validated config + ABIs and creates all the files in the subgraph project.
 

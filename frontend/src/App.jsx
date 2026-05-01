@@ -94,6 +94,10 @@ export default function App() {
   const [genStatus, setGenStatus] = useState(null);   // null | 'generating' | { files: [...] } | { error: string }
   const [genModalOpen, setGenModalOpen] = useState(false);
   const [genDir, setGenDir] = useState('');           // user-chosen output directory
+  const [outputMode, setOutputMode] = useState('graph'); // 'graph' | 'ponder'
+  const [ponderSettings, setPonderSettings] = useState({ // persisted Ponder config
+    database: 'pglite', dbUrl: '', ordering: 'multichain',
+  });
 
   // ── File management state ─────────────────────────────────────────────────
   const [currentFile, setCurrentFile]       = useState(null);   // name of open canvas file (null = untitled)
@@ -228,6 +232,8 @@ export default function App() {
     );
     setSubgraphName(data.subgraph_name ?? '');
     setNetworks(data.networks ?? []);
+    setOutputMode(data.output_mode ?? 'graph');
+    setPonderSettings({ database: 'pglite', dbUrl: '', ordering: 'multichain', ...(data.ponder_settings ?? {}) });
     setCurrentFile(name);
 
     // Allow React to flush all the state updates, then clear dirty flag
@@ -235,7 +241,7 @@ export default function App() {
       suppressDirtyRef.current = false;
       setIsDirty(false);
     }, 0);
-  }, [updateNodeData, deleteNode, setNodes, setEdges, setSubgraphName, setNetworks]);
+  }, [updateNodeData, deleteNode, setNodes, setEdges, setSubgraphName, setNetworks, setOutputMode, setPonderSettings]);
 
   // ── Clear the canvas (new canvas) — assumes dirty check already done ─────
   const newCanvas = useCallback(() => {
@@ -292,6 +298,8 @@ export default function App() {
           );
           setNetworks(config.networks ?? []);
           setSubgraphName(config.subgraph_name ?? '');
+          setOutputMode(config.output_mode ?? 'graph');
+          setPonderSettings({ database: 'pglite', dbUrl: '', ordering: 'multichain', ...(config.ponder_settings ?? {}) });
           // Restore which file was open in the last session
           if (config.current_file) setCurrentFile(config.current_file);
 
@@ -418,6 +426,8 @@ export default function App() {
     schema_version: 1,
     subgraph_name: subgraphName,
     current_file: currentFile,
+    output_mode: outputMode,
+    ponder_settings: ponderSettings,
     networks,
     nodes: nodes.map((n) => ({
       id: n.id,
@@ -432,7 +442,7 @@ export default function App() {
       target: e.target,
       targetHandle: e.targetHandle ?? '',
     })),
-  }), [subgraphName, currentFile, networks, nodes, edges]);
+  }), [subgraphName, currentFile, outputMode, ponderSettings, networks, nodes, edges]);
 
   // ── Session save (visual-config.json) — for restore on next startup ──────
   // Called automatically whenever an explicit Save or Save As completes.
@@ -772,7 +782,7 @@ export default function App() {
   const genLabel = genStatus === 'generating' ? 'Generating…'
     : genStatus?.files ? `✓ ${genStatus.files.length} files written`
     : genStatus?.error ? `✗ ${genStatus.error}`
-    : 'Generate';
+    : outputMode === 'ponder' ? 'Generate Ponder' : 'Generate Subgraph';
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: 'var(--bg-canvas)' }}>
@@ -943,6 +953,48 @@ export default function App() {
             {/* ── Divider ── */}
             <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
 
+            {/* ── Output mode toggle: Graph | Ponder ── */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 0,
+              background: 'rgba(0,0,0,0.25)',
+              border: '1px solid var(--border)',
+              borderRadius: 5,
+              overflow: 'hidden',
+            }}>
+              <button
+                onClick={() => { setOutputMode('graph'); markDirty(); }}
+                title="Generate a Graph Protocol subgraph"
+                style={{
+                  padding: '4px 9px',
+                  background: outputMode === 'graph' ? 'rgba(124,58,237,0.28)' : 'transparent',
+                  border: 'none',
+                  borderRight: '1px solid var(--border)',
+                  color: outputMode === 'graph' ? 'var(--accent-light)' : 'var(--text-muted)',
+                  fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  transition: 'background 0.15s',
+                }}
+              >
+                Graph
+              </button>
+              <button
+                onClick={() => { setOutputMode('ponder'); markDirty(); }}
+                title="Generate a Ponder TypeScript indexer"
+                style={{
+                  padding: '4px 9px',
+                  background: outputMode === 'ponder' ? 'rgba(59,130,246,0.28)' : 'transparent',
+                  border: 'none',
+                  color: outputMode === 'ponder' ? '#93c5fd' : 'var(--text-muted)',
+                  fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  transition: 'background 0.15s',
+                }}
+              >
+                Ponder
+              </button>
+            </div>
+
+            {/* ── Divider ── */}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+
             {/* ── Simulate / Generate ── */}
             <button
               onClick={() => setSimulateOpen(true)}
@@ -964,7 +1016,7 @@ export default function App() {
             <button
               onClick={() => { if (!hasErrors && genStatus !== 'generating') setGenModalOpen(true); }}
               disabled={hasErrors || genStatus === 'generating'}
-              title={hasErrors ? 'Fix validation errors before generating' : 'Generate subgraph files'}
+              title={hasErrors ? 'Fix validation errors before generating' : outputMode === 'ponder' ? 'Generate Ponder TypeScript indexer' : 'Generate subgraph files'}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 padding: '4px 12px',
@@ -1093,6 +1145,9 @@ export default function App() {
       {genModalOpen && (
         <GenerateModal
           initialDir={genDir}
+          outputMode={outputMode}
+          ponderSettings={ponderSettings}
+          onPonderSettingsChange={setPonderSettings}
           onConfirm={(dir) => { setGenDir(dir); generateFiles(dir); }}
           onClose={() => setGenModalOpen(false)}
         />

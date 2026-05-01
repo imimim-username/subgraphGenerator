@@ -912,7 +912,32 @@ function GenerateSection() {
         </tbody>
       </table>
 
-      <div style={s.h4}>Output files written</div>
+      <div style={s.h4}>Output mode</div>
+      <p style={s.p}>
+        Use the <strong style={{ color: '#e2e8f0' }}>Output mode</strong> toggle in the toolbar
+        to choose between two indexing targets:
+      </p>
+      <table style={s.portTable}>
+        <tbody>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, width: 110, color: '#a78bfa', fontFamily: 'ui-monospace, monospace' }}>The Graph</td>
+            <td style={s.td}>
+              AssemblyScript subgraph — deploy to The Graph Studio or a self-hosted Graph node.
+              Output: <code style={s.inlineCode}>subgraph.yaml</code>, <code style={s.inlineCode}>schema.graphql</code>, AssemblyScript mapping files.
+            </td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, color: '#a78bfa', fontFamily: 'ui-monospace, monospace' }}>Ponder</td>
+            <td style={s.td}>
+              TypeScript indexer — runs as a self-hosted Node.js process with a live GraphQL API.
+              All networks in the Networks panel are indexed simultaneously in one process.
+              Output: <code style={s.inlineCode}>ponder.config.ts</code>, <code style={s.inlineCode}>ponder.schema.ts</code>, <code style={s.inlineCode}>src/index.ts</code>, and more.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style={s.h4}>The Graph — output files</div>
       <table style={s.portTable}>
         <tbody>
           {[
@@ -932,12 +957,44 @@ function GenerateSection() {
       </table>
 
       <div style={s.tip}>
-        💡 <strong>After generating:</strong> open a terminal in the output directory and run
-        <code style={{ ...s.inlineCode, marginLeft: 4 }}>npm install</code> followed by{' '}
+        💡 <strong>After generating (The Graph):</strong> run{' '}
+        <code style={s.inlineCode}>npm install</code>,{' '}
         <code style={s.inlineCode}>npm run codegen</code>,{' '}
-        <code style={s.inlineCode}>npm run build</code>, and{' '}
-        <code style={s.inlineCode}>npm run deploy</code>. The <code style={s.inlineCode}>howto.md</code>{' '}
-        file included in the output walks through each step in detail.
+        <code style={s.inlineCode}>npm run build</code>, then{' '}
+        <code style={s.inlineCode}>npm run deploy</code>. See <code style={s.inlineCode}>howto.md</code> for the full walkthrough.
+      </div>
+
+      <div style={s.h4}>Ponder — output files</div>
+      <table style={s.portTable}>
+        <tbody>
+          {[
+            ['ponder.config.ts', 'Chain RPC config, contract addresses, and start blocks'],
+            ['ponder.schema.ts', 'Typed onchainTable definitions — one per entity node'],
+            ['src/index.ts', 'TypeScript event handlers compiled from your canvas wiring'],
+            ['src/api/index.ts', 'Hono app; mounts GraphQL at /graphql and / (GraphiQL)'],
+            ['package.json', 'pnpm dev / start / codegen scripts'],
+            ['.env.example', 'RPC URL placeholders — copy to .env.local and fill in'],
+            ['PONDER_HOWTO.md', 'Step-by-step guide to running and deploying the indexer'],
+          ].map(([file, desc]) => (
+            <tr key={file}>
+              <td style={{ ...s.td, fontFamily: 'ui-monospace, monospace', fontSize: 10, color: '#a78bfa', whiteSpace: 'nowrap', width: 200 }}>{file}</td>
+              <td style={s.td}>{desc}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={s.tip}>
+        💡 <strong>After generating (Ponder):</strong> copy <code style={s.inlineCode}>.env.example</code> to{' '}
+        <code style={s.inlineCode}>.env.local</code>, fill in your RPC URLs, then run{' '}
+        <code style={s.inlineCode}>pnpm install</code> and <code style={s.inlineCode}>pnpm dev</code>.
+        The GraphQL API is at <code style={s.inlineCode}>http://localhost:42069/graphql</code>.
+      </div>
+
+      <div style={{ ...s.tip, background: 'rgba(167,139,250,0.07)', borderLeft: '3px solid #a78bfa', marginTop: 8 }}>
+        🔗 <strong>Ponder — auto chain field:</strong> Every entity table automatically gets a{' '}
+        <code style={s.inlineCode}>chain</code> column. Every insert sets it to the current
+        chain name so you can filter results by network in your GraphQL queries.
       </div>
 
       <div style={s.warn}>

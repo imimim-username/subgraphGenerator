@@ -82,6 +82,8 @@ class VisualConfig(BaseModel):
     schema_version: int = 1
     subgraph_name: str = ""
     current_file: str | None = None   # name of the last-active canvas file (for session restore)
+    output_mode: str = "graph"        # "graph" | "ponder"
+    ponder_settings: dict[str, Any] = {}  # database, ordering, etc. — ponder mode only
     networks: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -194,6 +196,8 @@ async def config_load(dir: str | None = Query(default=None)) -> JSONResponse:
                 "schema_version": 1,
                 "subgraph_name": "",
                 "current_file": None,
+                "output_mode": "graph",
+                "ponder_settings": {},
                 "networks": [],
                 "nodes": [],
                 "edges": [],
@@ -571,115 +575,228 @@ async def generate(
       dir  — output directory (default: cwd)
 
     Returns {"files": ["path1", "path2", ...], "dir": "<output_dir>"} on success.
-    """
-    from subgraph_wizard.generate.graph_compiler import compile_graph
-    from subgraph_wizard.generate.networks_json import write_networks_json
-    from subgraph_wizard.generate.subgraph_yaml import render_visual_subgraph_yaml
 
+    When config.output_mode == "ponder", generates a Ponder TypeScript project
+    instead of a Graph Protocol subgraph.
+    """
     output_dir = Path(dir) if dir else Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config_dict = config.model_dump()
     subgraph_name = config.subgraph_name or "my-subgraph"
+    output_mode = config.output_mode or "graph"
     written: list[str] = []
 
     try:
-        # 1. Write visual-config.json
+        # Always write visual-config.json alongside the generated output
         config_path = output_dir / "visual-config.json"
         config_path.write_text(
             json.dumps(config_dict, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         written.append(str(config_path))
 
-        # 2. Write networks.json
-        if config.networks:
-            nj_path = write_networks_json(config.networks, output_dir)
-            written.append(str(nj_path))
-
-        # 3. Auto-detect missing startBlocks, then write subgraph.yaml
-        import asyncio as _asyncio
-        _detections: list[tuple] = []  # (node_index, address, network)
-        for _i, _node in enumerate(config_dict.get("nodes", [])):
-            if _node.get("type") != "contract":
-                continue
-            _d = _node.get("data", {})
-            _addr = _d.get("address", "").strip()
-            _sb = _d.get("startBlock", 0)
-            try:
-                _sb_int = int(_sb or 0)
-            except (ValueError, TypeError):
-                _sb_int = 0
-            if _addr.startswith("0x") and _sb_int == 0:
-                _net = _d.get("network", "mainnet") or "mainnet"
-                _detections.append((_i, _addr, _net))
-
-        if _detections:
-            async def _detect_all():
-                tasks = [
-                    _asyncio.to_thread(_detect_start_block_sync, addr, net)
-                    for (_, addr, net) in _detections
-                ]
-                return await _asyncio.gather(*tasks, return_exceptions=True)
-
-            _results = await _detect_all()
-            for (idx, _a, _n), result in zip(_detections, _results):
-                if isinstance(result, int) and result > 0:
-                    config_dict["nodes"][idx]["data"]["startBlock"] = result
-                    logger.info(f"Auto-detected startBlock={result} for {_a} on {_n}")
-
-        yaml_content = render_visual_subgraph_yaml(config_dict)
-        yaml_path = output_dir / "subgraph.yaml"
-        yaml_path.write_text(yaml_content, encoding="utf-8")
-        written.append(str(yaml_path))
-
-        # 3b. Write schema.graphql
-        schema_content = _render_visual_schema(config_dict)
-        schema_path = output_dir / "schema.graphql"
-        schema_path.write_text(schema_content, encoding="utf-8")
-        written.append(str(schema_path))
-
-        # 4. Write ABI files from contract node data
-        #    (subgraph.yaml already references ./abis/<ContractName>.json)
-        abis_dir = output_dir / "abis"
-        abis_dir.mkdir(parents=True, exist_ok=True)
-        for node in config_dict.get("nodes", []):
-            if node.get("type") != "contract":
-                continue
-            contract_name = node.get("data", {}).get("name", "").strip()
-            abi_data = node.get("data", {}).get("abi")
-            if contract_name and abi_data:
-                abi_path = abis_dir / f"{contract_name}.json"
-                abi_path.write_text(
-                    json.dumps(abi_data, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-                written.append(str(abi_path))
-
-        # 5. Write AssemblyScript mapping files
-        as_files = compile_graph(config_dict)
-        if as_files:
-            mappings_dir = output_dir / "src" / "mappings"
-            mappings_dir.mkdir(parents=True, exist_ok=True)
-            for contract_type, source in as_files.items():
-                ts_path = mappings_dir / f"{contract_type}.ts"
-                ts_path.write_text(source, encoding="utf-8")
-                written.append(str(ts_path))
-
-        # 7. Write package.json
-        pkg_json = _render_package_json(subgraph_name)
-        pkg_path = output_dir / "package.json"
-        pkg_path.write_text(pkg_json, encoding="utf-8")
-        written.append(str(pkg_path))
-
-        # 8. Write howto.md
-        howto_content = _render_howto_md(subgraph_name, str(output_dir))
-        howto_path = output_dir / "howto.md"
-        howto_path.write_text(howto_content, encoding="utf-8")
-        written.append(str(howto_path))
+        if output_mode == "ponder":
+            written.extend(_generate_ponder(config_dict, subgraph_name, output_dir))
+        else:
+            written.extend(
+                await _generate_graph(config_dict, subgraph_name, output_dir)
+            )
 
     except Exception as e:
+        logger.exception("generate error")
         raise HTTPException(status_code=500, detail=str(e))
 
     return JSONResponse({"files": written, "dir": str(output_dir)})
+
+
+async def _generate_graph(
+    config_dict: dict[str, Any],
+    subgraph_name: str,
+    output_dir: Path,
+) -> list[str]:
+    """Write a full Graph Protocol subgraph project to *output_dir*.
+
+    Returns the list of written file paths.
+    """
+    from subgraph_wizard.generate.graph_compiler import compile_graph
+    from subgraph_wizard.generate.networks_json import write_networks_json
+    from subgraph_wizard.generate.subgraph_yaml import render_visual_subgraph_yaml
+    import asyncio as _asyncio
+
+    written: list[str] = []
+
+    # networks.json
+    networks = config_dict.get("networks", [])
+    if networks:
+        nj_path = write_networks_json(networks, output_dir)
+        written.append(str(nj_path))
+
+    # Auto-detect missing startBlocks, then write subgraph.yaml
+    _detections: list[tuple] = []  # (node_index, address, network)
+    for _i, _node in enumerate(config_dict.get("nodes", [])):
+        if _node.get("type") != "contract":
+            continue
+        _d = _node.get("data", {})
+        _addr = _d.get("address", "").strip()
+        _sb = _d.get("startBlock", 0)
+        try:
+            _sb_int = int(_sb or 0)
+        except (ValueError, TypeError):
+            _sb_int = 0
+        if _addr.startswith("0x") and _sb_int == 0:
+            _net = _d.get("network", "mainnet") or "mainnet"
+            _detections.append((_i, _addr, _net))
+
+    if _detections:
+        tasks = [
+            _asyncio.to_thread(_detect_start_block_sync, addr, net)
+            for (_, addr, net) in _detections
+        ]
+        _results = await _asyncio.gather(*tasks, return_exceptions=True)
+        for (idx, _a, _n), result in zip(_detections, _results):
+            if isinstance(result, int) and result > 0:
+                config_dict["nodes"][idx]["data"]["startBlock"] = result
+                logger.info(f"Auto-detected startBlock={result} for {_a} on {_n}")
+
+    yaml_content = render_visual_subgraph_yaml(config_dict)
+    yaml_path = output_dir / "subgraph.yaml"
+    yaml_path.write_text(yaml_content, encoding="utf-8")
+    written.append(str(yaml_path))
+
+    # schema.graphql
+    schema_content = _render_visual_schema(config_dict)
+    schema_path = output_dir / "schema.graphql"
+    schema_path.write_text(schema_content, encoding="utf-8")
+    written.append(str(schema_path))
+
+    # ABI JSON files
+    abis_dir = output_dir / "abis"
+    abis_dir.mkdir(parents=True, exist_ok=True)
+    for node in config_dict.get("nodes", []):
+        if node.get("type") != "contract":
+            continue
+        contract_name = node.get("data", {}).get("name", "").strip()
+        abi_data = node.get("data", {}).get("abi")
+        if contract_name and abi_data:
+            abi_path = abis_dir / f"{contract_name}.json"
+            abi_path.write_text(
+                json.dumps(abi_data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            written.append(str(abi_path))
+
+    # AssemblyScript mapping files
+    as_files = compile_graph(config_dict)
+    if as_files:
+        mappings_dir = output_dir / "src" / "mappings"
+        mappings_dir.mkdir(parents=True, exist_ok=True)
+        for contract_type, source in as_files.items():
+            ts_path = mappings_dir / f"{contract_type}.ts"
+            ts_path.write_text(source, encoding="utf-8")
+            written.append(str(ts_path))
+
+    # package.json
+    pkg_json = _render_package_json(subgraph_name)
+    pkg_path = output_dir / "package.json"
+    pkg_path.write_text(pkg_json, encoding="utf-8")
+    written.append(str(pkg_path))
+
+    # howto.md
+    howto_content = _render_howto_md(subgraph_name, str(output_dir))
+    howto_path = output_dir / "howto.md"
+    howto_path.write_text(howto_content, encoding="utf-8")
+    written.append(str(howto_path))
+
+    return written
+
+
+def _generate_ponder(
+    config_dict: dict[str, Any],
+    subgraph_name: str,
+    output_dir: Path,
+) -> list[str]:
+    """Write a full Ponder TypeScript indexer project to *output_dir*.
+
+    Returns the list of written file paths.
+    """
+    from subgraph_wizard.generate.ponder_compiler import compile_ponder, render_abi_ts
+    from subgraph_wizard.generate.ponder_schema import render_ponder_schema
+    from subgraph_wizard.generate.ponder_config import (
+        render_ponder_config,
+        render_ponder_env_dts,
+        render_ponder_tsconfig,
+        render_ponder_package_json,
+        render_ponder_env_example,
+        render_ponder_api_index,
+        render_ponder_howto,
+    )
+
+    written: list[str] = []
+
+    # ponder.config.ts
+    ponder_cfg = render_ponder_config(config_dict)
+    (output_dir / "ponder.config.ts").write_text(ponder_cfg, encoding="utf-8")
+    written.append(str(output_dir / "ponder.config.ts"))
+
+    # ponder.schema.ts
+    ponder_schema = render_ponder_schema(config_dict)
+    (output_dir / "ponder.schema.ts").write_text(ponder_schema, encoding="utf-8")
+    written.append(str(output_dir / "ponder.schema.ts"))
+
+    # ponder-env.d.ts
+    (output_dir / "ponder-env.d.ts").write_text(render_ponder_env_dts(), encoding="utf-8")
+    written.append(str(output_dir / "ponder-env.d.ts"))
+
+    # tsconfig.json
+    (output_dir / "tsconfig.json").write_text(render_ponder_tsconfig(), encoding="utf-8")
+    written.append(str(output_dir / "tsconfig.json"))
+
+    # package.json
+    (output_dir / "package.json").write_text(
+        render_ponder_package_json(subgraph_name), encoding="utf-8"
+    )
+    written.append(str(output_dir / "package.json"))
+
+    # .env.example
+    (output_dir / ".env.example").write_text(
+        render_ponder_env_example(config_dict), encoding="utf-8"
+    )
+    written.append(str(output_dir / ".env.example"))
+
+    # PONDER_HOWTO.md
+    (output_dir / "PONDER_HOWTO.md").write_text(
+        render_ponder_howto(subgraph_name, str(output_dir), config_dict), encoding="utf-8"
+    )
+    written.append(str(output_dir / "PONDER_HOWTO.md"))
+
+    # ABI TypeScript files  (abis/<ContractName>Abi.ts)
+    abis_dir = output_dir / "abis"
+    abis_dir.mkdir(parents=True, exist_ok=True)
+    for node in config_dict.get("nodes", []):
+        if node.get("type") != "contract":
+            continue
+        contract_name = node.get("data", {}).get("name", "").strip()
+        abi_data = node.get("data", {}).get("abi")
+        if contract_name and abi_data:
+            abi_ts = render_abi_ts(contract_name, abi_data)
+            abi_path = abis_dir / f"{contract_name}Abi.ts"
+            abi_path.write_text(abi_ts, encoding="utf-8")
+            written.append(str(abi_path))
+
+    # src/api/index.ts  (required by Ponder as the HTTP/API entry point)
+    api_dir = output_dir / "src" / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    (api_dir / "index.ts").write_text(render_ponder_api_index(), encoding="utf-8")
+    written.append(str(api_dir / "index.ts"))
+
+    # src/index.ts  (event handlers) — compile_ponder keys include the "src/" prefix
+    ts_files = compile_ponder(config_dict)
+    for rel_path, content in ts_files.items():
+        file_path = output_dir / rel_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        written.append(str(file_path))
+
+    return written
 
 
 def _render_package_json(subgraph_name: str) -> str:

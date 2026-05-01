@@ -22,7 +22,7 @@ const TEXT       = '#e2e8f0';
 const TEXT_MUTED = '#64748b';
 const INPUT_BG   = '#1e293b';
 
-export default function GenerateModal({ initialDir, onConfirm, onClose }) {
+export default function GenerateModal({ initialDir, outputMode, ponderSettings, onPonderSettingsChange, onConfirm, onClose }) {
   const [typedDir, setTypedDir]     = useState(initialDir || '');
   const [browsePath, setBrowsePath] = useState(null);   // null = browser not loaded yet
   const [listing, setListing]       = useState(null);   // { path, parent, dirs }
@@ -120,11 +120,13 @@ export default function GenerateModal({ initialDir, onConfirm, onClose }) {
       }}>
         {/* ── Header ── */}
         <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 6 }}>
-          Generate Subgraph Files
+          {outputMode === 'ponder' ? 'Generate Ponder Project' : 'Generate Subgraph Files'}
         </div>
         <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 18, lineHeight: 1.6 }}>
           Choose where to write the generated files. A{' '}
-          <code style={{ fontSize: 11, background: '#1e293b', padding: '1px 5px', borderRadius: 3, color: ACCENT_LT }}>howto.md</code>{' '}
+          <code style={{ fontSize: 11, background: '#1e293b', padding: '1px 5px', borderRadius: 3, color: ACCENT_LT }}>
+            {outputMode === 'ponder' ? 'PONDER_HOWTO.md' : 'howto.md'}
+          </code>{' '}
           deployment guide and{' '}
           <code style={{ fontSize: 11, background: '#1e293b', padding: '1px 5px', borderRadius: 3, color: ACCENT_LT }}>package.json</code>{' '}
           will be included. The directory is created if it doesn't exist.
@@ -308,6 +310,75 @@ export default function GenerateModal({ initialDir, onConfirm, onClose }) {
               <span style={{ fontSize: 11, color: TEXT_MUTED, flex: 1 }}>
                 Selected: <span style={{ color: TEXT, fontFamily: 'ui-monospace, monospace' }}>{browsePath ?? '—'}</span>
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Ponder settings (only in ponder mode) ── */}
+        {outputMode === 'ponder' && ponderSettings && (
+          <div style={{
+            border: `1px solid ${BORDER_CLR}`,
+            borderRadius: 8,
+            padding: '14px 16px',
+            marginBottom: 14,
+            background: 'rgba(59,130,246,0.04)',
+            flexShrink: 0,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#93c5fd', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>
+              Ponder Settings
+            </div>
+
+            {/* Database */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: TEXT_MUTED, fontWeight: 600, marginBottom: 6 }}>Database</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {[
+                  { value: 'pglite', label: 'PGlite', desc: 'Embedded zero-config database (recommended for dev)' },
+                  { value: 'postgres', label: 'PostgreSQL', desc: 'External PostgreSQL for production' },
+                ].map(({ value, label, desc }) => (
+                  <label key={value} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="ponder-db"
+                      value={value}
+                      checked={ponderSettings.database === value}
+                      onChange={() => onPonderSettingsChange({ ...ponderSettings, database: value })}
+                      style={{ marginTop: 2, accentColor: '#3b82f6', cursor: 'pointer' }}
+                    />
+                    <span>
+                      <span style={{ fontSize: 12, color: TEXT, fontWeight: 600 }}>{label}</span>
+                      <span style={{ fontSize: 11, color: TEXT_MUTED, marginLeft: 6 }}>{desc}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {ponderSettings.database === 'postgres' && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>
+                    Set <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, color: ACCENT_LT }}>DATABASE_URL</code> in your <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3, color: ACCENT_LT }}>.env</code> — the generated config reads it from there.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Ordering */}
+            <div>
+              <label style={{ fontSize: 11, color: TEXT_MUTED, fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                Event ordering
+              </label>
+              <select
+                value={ponderSettings.ordering}
+                onChange={(e) => onPonderSettingsChange({ ...ponderSettings, ordering: e.target.value })}
+                style={{
+                  background: INPUT_BG, border: `1px solid ${BORDER_CLR}`, borderRadius: 6,
+                  padding: '6px 10px', color: TEXT, fontSize: 12, outline: 'none', width: '100%',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="multichain">multichain — order events per-chain independently (default)</option>
+                <option value="omnichain">omnichain — global ordering across all chains</option>
+                <option value="experimental_isolated">experimental_isolated — one DB per chain</option>
+              </select>
             </div>
           </div>
         )}
