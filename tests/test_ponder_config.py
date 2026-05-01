@@ -530,13 +530,31 @@ class TestRenderPonderApiIndex:
         out = render_ponder_api_index()
         assert "Hono()" in out or "new Hono" in out
 
-    def test_root_redirects_to_graphql(self):
-        """GET / must redirect to /graphql so the playground is one click away."""
+    def test_graphql_middleware_mounted(self):
+        """Since Ponder 0.8 the GraphQL API is not automatic — must be mounted explicitly.
+
+        Without `app.use("/graphql", graphql({ db, schema }))` every request
+        to /graphql returns 404.
+        """
         from subgraph_wizard.generate.ponder_config import render_ponder_api_index
         out = render_ponder_api_index()
-        # Must register a GET handler for "/" that redirects to "/graphql"
-        assert 'app.get("/")' in out or 'app.get("/",' in out
-        assert 'redirect("/graphql")' in out or "redirect('/graphql')" in out
+        # Must import the graphql helper from "ponder"
+        assert 'from "ponder"' in out
+        assert "graphql" in out
+        # Must import db and schema from the virtual modules
+        assert 'from "ponder:api"' in out
+        assert 'from "ponder:schema"' in out
+        # Must mount graphql at /graphql
+        assert '"/graphql"' in out
+        assert "graphql({ db, schema })" in out
+
+    def test_graphql_also_mounted_at_root(self):
+        """Mounting graphql at / lets users open localhost:42069/ directly."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        # Both / and /graphql should serve the playground
+        assert '"/"' in out
+        assert out.count("graphql({ db, schema })") >= 2
 
 
 # ── render_ponder_howto — .env.local ──────────────────────────────────────────

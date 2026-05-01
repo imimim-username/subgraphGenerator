@@ -432,15 +432,19 @@ def render_ponder_api_index() -> str:
         TypeScript source string.
     """
     return """\
+import { db } from "ponder:api";
+import schema from "ponder:schema";
+import { graphql } from "ponder";
 import { Hono } from "hono";
 
-// Ponder's built-in GraphQL API is always available at /graphql.
-// See: https://ponder.sh/docs/api-reference/ponder/api-endpoints
-
+// Since Ponder 0.8 the GraphQL API is NOT served automatically — it must be
+// mounted explicitly.  See: https://ponder.sh/docs/query/graphql
 const app = new Hono();
 
-// Redirect root to the GraphQL playground.
-app.get("/", (c) => c.redirect("/graphql"));
+app.use("/graphql", graphql({ db, schema }));
+
+// Also serve the GraphiQL playground at / for convenience.
+app.use("/", graphql({ db, schema }));
 
 // Add custom API endpoints below.
 
