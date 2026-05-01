@@ -626,16 +626,76 @@ def render_ponder_howto(
         for n in nodes
     )
 
-    # ── Step 2: env file — tailored to database choice ───────────────────────
-    rpc_lines = "\n".join(f"  {v}=<your-rpc-url>   # {s}" for v, s in zip(rpc_vars, seen_slugs))
+    # Collect entity / aggregate entity names for GraphQL examples
+    entity_names: list[str] = []
+    for n in nodes:
+        if n.get("type") in ("entity", "aggregateentity"):
+            nm = n.get("data", {}).get("name", "").strip()
+            if nm:
+                entity_names.append(nm)
+    example_table = (
+        entity_names[0][0].lower() + entity_names[0][1:] + "s"
+        if entity_names else "myTable"
+    )
+    # Build a list of example field names from the first entity node
+    example_fields: list[str] = ["id", "chain"]
+    for n in nodes:
+        if n.get("type") in ("entity", "aggregateentity") and entity_names:
+            nm = n.get("data", {}).get("name", "").strip()
+            if nm == entity_names[0]:
+                for f in (n.get("data", {}).get("fields") or [])[:3]:
+                    fname = f.get("name", "").strip()
+                    if fname and fname not in example_fields:
+                        example_fields.append(fname)
+                break
+
+    # ── RPC URL step (shared) ────────────────────────────────────────────────
+    rpc_env_lines = "\n".join(
+        f"{v}=https://eth-{s}.g.alchemy.com/v2/YOUR_KEY"
+        for v, s in zip(rpc_vars, seen_slugs)
+    )
+    chains_list = ", ".join(f"**{s}**" for s in seen_slugs)
+    step_rpc = f"""\
+## Step 2 — Get an RPC endpoint
+
+To read blockchain data, Ponder needs to connect to a blockchain node via an
+**RPC (Remote Procedure Call) endpoint** — a URL that lets your indexer send
+requests like "give me all events from block 18000000 to 18001000".
+
+This project indexes: {chains_list}.
+You need one RPC URL per chain.
+
+### Get a free endpoint from Alchemy
+
+[Alchemy](https://alchemy.com) provides free RPC endpoints and is the easiest
+option for getting started.
+
+1. Go to <https://alchemy.com> and sign up for a free account.
+2. Click **"Create new app"**.
+3. Give it a name (anything, e.g. *my-ponder-app*).
+4. Select the network(s) you need (match the chain(s) listed above).
+5. Click **"Create app"**.
+6. On the app dashboard, click **"API key"** (top right).
+7. Copy the **HTTPS** URL — it looks like:
+   `https://eth-mainnet.g.alchemy.com/v2/abc123XYZ...`
+
+Repeat for each chain if you need more than one.
+
+> **Alternatives:** [Infura](https://infura.io), [QuickNode](https://quicknode.com),
+> [Ankr](https://ankr.com), and [drpc.org](https://drpc.org) all offer free tiers.
+> Any HTTPS RPC endpoint works — just paste the URL in the next step.
+
+You'll paste these URLs into `.env.local` in Step 3."""
+
+    # ── Step 3: database + env file ──────────────────────────────────────────
     if use_postgres:
-        step2 = f"""\
-## Step 2 — Set up PostgreSQL and configure environment variables
+        step_db = f"""\
+## Step 3 — Set up PostgreSQL and configure environment variables
 
-This project was generated with PostgreSQL as the database backend.
-You need a running Postgres server **before** starting the indexer.
+This project uses PostgreSQL as its database.  You need a running Postgres
+server before starting the indexer.
 
-### 2a — Install / start PostgreSQL
+### 3a — Install PostgreSQL
 
 **macOS (Homebrew):**
 ```bash
@@ -643,153 +703,129 @@ brew install postgresql@16
 brew services start postgresql@16
 ```
 
-**Ubuntu / Debian:**
+**Ubuntu / Debian (including WSL on Windows):**
 ```bash
 sudo apt update && sudo apt install -y postgresql
 sudo systemctl start postgresql
-sudo systemctl enable postgresql
+sudo systemctl enable postgresql   # auto-start on reboot
 ```
 
-**Managed cloud options (no local install needed):**
-- [Supabase](https://supabase.com) — free tier available
+**Managed cloud (no local install — easiest option):**
+- [Supabase](https://supabase.com) — free tier, includes a connection string
 - [Neon](https://neon.tech) — free tier, serverless Postgres
-- [Railway](https://railway.app) — free tier, easy deploys
+- [Railway](https://railway.app) — free tier, one-click Postgres
 
-### 2b — Create the database
+If you use a managed service, skip to step 3c and use the connection string
+they provide.
 
-> **Linux only — "Peer authentication failed":**
-> PostgreSQL on Linux defaults to *peer authentication* for local connections.
-> This means it checks that your **Linux username** matches the **database username**.
-> Since the superuser account is named `postgres`, you must use `sudo` to switch to
-> that Linux account first.  Running `psql -U postgres` directly will fail with
-> *"Peer authentication failed for user postgres"*.
+### 3b — Create the database and user
+
+> **Linux note — "Peer authentication failed":**
+> On Linux, PostgreSQL only lets you log in as the `postgres` superuser if you
+> are *also* running as the `postgres` Linux system user.  Typing
+> `psql -U postgres` in a normal terminal will fail.  Use `sudo -u postgres psql`
+> instead — this switches to the postgres system user first.
 
 ```bash
-# Connect to the local Postgres server as the superuser (Linux / macOS):
 sudo -u postgres psql
 ```
 
-> **macOS note:** If you installed via Homebrew, your own macOS username is likely
-> already the superuser. Try `psql postgres` (no sudo) if the above fails.
+> **macOS (Homebrew) note:** Try `psql postgres` (no sudo) — Homebrew makes
+> your own macOS username the superuser.
 
-Once you are inside the `psql` prompt (it looks like `postgres=#`), run:
+You should see a prompt like `postgres=#`.  Now type these commands exactly,
+pressing Enter after each one.  Replace `yourpassword` with a password you
+choose (write it down — you'll need it again):
 
 ```sql
--- Create a dedicated database for this Ponder project
 CREATE DATABASE ponder;
-
--- Create a user Ponder will connect as (choose your own password)
 CREATE USER ponder WITH PASSWORD 'yourpassword';
-
--- Give that user full access to the database
 GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder;
-
--- Switch into the ponder database so the next GRANT applies there
 \\c ponder
-
--- Grant schema-level CREATE privilege.
--- Required on PostgreSQL 15+ — older versions allow this by default,
--- but PG 15 revoked it for security reasons.  Without this, Ponder
--- fails with "permission denied for schema public" when it tries to
--- create its internal tables.
 GRANT ALL ON SCHEMA public TO ponder;
-
--- Exit psql
 \\q
 ```
 
-Your `DATABASE_URL` will be (note `localhost` — this forces a TCP connection
-which uses password authentication, bypassing the peer auth restriction):
+**What each line does:**
+- `CREATE DATABASE ponder` — creates a new empty database called `ponder`
+- `CREATE USER ponder WITH PASSWORD ...` — creates a login for Ponder to use
+- `GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder` — lets that user access the database
+- `\\c ponder` — switches psql into the `ponder` database
+- `GRANT ALL ON SCHEMA public TO ponder` — lets the user create tables (required on PostgreSQL 15+)
+- `\\q` — exits psql
 
-```
-postgresql://ponder:yourpassword@localhost:5432/ponder
-```
+### 3c — Verify the connection
 
-### 2c — Verify the connection before continuing (recommended)
-
-Test that you can actually connect with the new user **before** setting up `.env.local`
-or running Ponder.  This catches credential problems early:
+Before going further, confirm Ponder can actually reach the database:
 
 ```bash
 psql "postgresql://ponder:yourpassword@localhost:5432/ponder"
 ```
 
-Replace `yourpassword` with the actual password you chose in `CREATE USER`.
-You should see a prompt like `ponder=>`.  Type `\\q` to exit.
+Replace `yourpassword` with the password you chose above.
+You should see a `ponder=>` prompt.  Type `\\q` to exit.
 
-If the connection fails, diagnose with:
+If you get an error, see the Troubleshooting section at the bottom of this file.
 
-```bash
-# See exactly why PostgreSQL rejected the connection
-sudo journalctl -u postgresql -n 20
-```
+Do not proceed until this command works.
 
-Common outcomes:
-
-| psql error | Cause | Fix |
-|---|---|---|
-| `Connection refused` | PostgreSQL not running | `sudo systemctl start postgresql` |
-| `password authentication failed` | Wrong password in URL | `sudo -u postgres psql -c "ALTER USER ponder WITH PASSWORD 'new';"` |
-| `database "ponder" does not exist` | DB not created | `sudo -u postgres psql -c "CREATE DATABASE ponder;"` |
-| `role "ponder" does not exist` | User not created | Re-run Step 2b |
-
-Do not proceed to Step 3 until `psql` connects successfully.
-
-### 2d — Create `.env.local`
+### 3d — Create `.env.local`
 
 ```bash
 cd "{output_dir}"
 cp .env.example .env.local
 ```
 
-Edit `.env.local` and fill in **all** of the following:
+Open `.env.local` in any text editor and fill in every blank value:
 
 ```
-# RPC endpoints (one per chain)
-{rpc_lines}
+# ── RPC endpoints ─────────────────────────────────────────────────────────
+# Paste your Alchemy (or other provider) HTTPS URLs here.
+{rpc_env_lines}
 
-# PostgreSQL connection string
+# ── Database ───────────────────────────────────────────────────────────────
+# The connection string for your PostgreSQL database.
 DATABASE_URL=postgresql://ponder:yourpassword@localhost:5432/ponder
 
-# Schema to use inside the database.
-# Must be unique per running Ponder instance (two instances cannot share
-# the same schema at the same time).
+# The schema (namespace) Ponder will use inside the database.
+# 'public' is fine for a single instance.  Use a different name
+# if you run multiple Ponder instances against the same database.
 DATABASE_SCHEMA=public
 ```
 
-> **`DATABASE_SCHEMA` is required for `ponder start`.**
-> It tells Ponder which Postgres schema (namespace) to write tables into.
-> `public` is a safe default for a single instance.
-> For multiple environments (staging/prod), use different schema names.
-
-> **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename."""
+> **Important:** Ponder reads `.env.local`, not `.env`.
+> Make sure the file is named exactly `.env.local`."""
     else:
-        step2 = f"""\
-## Step 2 — Configure your RPC URL
+        step_db = f"""\
+## Step 3 — Configure environment variables
 
-Copy `.env.example` to `.env.local` and fill in your RPC endpoint(s):
+### 3a — Create `.env.local`
 
 ```bash
 cd "{output_dir}"
 cp .env.example .env.local
 ```
 
-Edit `.env.local` and set the following variable(s):
+Open `.env.local` in any text editor and fill in your RPC URL(s):
 
 ```
-{rpc_lines}
+# Paste your Alchemy (or other provider) HTTPS URLs here.
+{rpc_env_lines}
 ```
 
-You can get a free RPC endpoint from [Alchemy](https://alchemy.com) or [Infura](https://infura.io).
+> **Important:** Ponder reads `.env.local`, not `.env`.
+> Make sure the file is named exactly `.env.local`.
 
-> **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename.
+### 3b — About the database
 
-> **Database:** This project uses **PGlite** — an embedded Postgres database
-> that runs entirely in Node.js.  Zero configuration; data is stored in
-> `.ponder/pglite/`.  No separate database server is needed for development.
+This project uses **PGlite** — a lightweight Postgres database that runs
+entirely inside Node.js.  You do **not** need to install PostgreSQL or set up
+any database server.  Ponder handles everything automatically and stores data
+in a local `.ponder/pglite/` folder.
 
-> **For production (`ponder start`)**, PGlite is not supported.  You must switch
-> to PostgreSQL (see Step 6 — Production deployment)."""
+> **For production (`pnpm start`)**, PGlite is not supported.
+> You will need to switch to PostgreSQL when deploying.  See
+> Step 7 — Production deployment."""
 
     # ── Ordering note ────────────────────────────────────────────────────────
     ordering_note = ""
@@ -817,77 +853,73 @@ You can get a free RPC endpoint from [Alchemy](https://alchemy.com) or [Infura](
 > state.  The handler has access to `context.db` but **not** `event` — any
 > generated code using `event.*` inside setup will need manual adjustment."""
 
-    # ── Auto-chain note ──────────────────────────────────────────────────────
-    # Mention the auto-injected chain column so users understand it's there.
-    chain_note = """\
-
-> **Auto `chain` field:** Every entity table has a `chain` column automatically
-> added by the generator (`chain: context.chain.name` on every insert).
-> You can filter or group your GraphQL queries by this field to separate data
-> from different networks.\
-"""
-
-    # ── GraphQL example ──────────────────────────────────────────────────────
-    # Use the first entity/aggregate node name for the example query, or fall
-    # back to a generic placeholder.
-    example_table = "myTable"
-    for n in nodes:
-        if n.get("type") in ("entity", "aggregateentity"):
-            nm = n.get("data", {}).get("name", "").strip()
-            if nm:
-                example_table = nm[0].lower() + nm[1:] + "s"
-                break
+    # ── GraphQL field list for examples ─────────────────────────────────────
+    fields_str = "\n      ".join(example_fields)
 
     # ── Production section — tailored to database ────────────────────────────
+    step_num_prod = 7
     if use_postgres:
-        prod_section = """\
-## Step 6 — Production deployment
+        prod_section = f"""\
+## Step {step_num_prod} — Production deployment
 
-Your project is already configured for PostgreSQL.
+Your project is already configured for PostgreSQL, so production is
+straightforward.  You just need a server that can run Node.js and reach
+your database.
 
-Make sure the following environment variables are set (in `.env.local` or your
-hosting platform's secrets dashboard):
+### Environment variables
+
+Make sure these are set on your production server (or in your hosting
+platform's secrets / environment variables dashboard):
 
 ```
 DATABASE_URL=postgresql://ponder:yourpassword@host:5432/ponder
-DATABASE_SCHEMA=public        # unique per running Ponder instance
-PONDER_RPC_URL_<chainId>=...  # one per chain
+DATABASE_SCHEMA=public
+{rpc_env_lines}
 ```
 
-> **Managed Postgres (Supabase, Neon, Railway, etc.):** These services often
-> require SSL.  Add `?sslmode=require` to your `DATABASE_URL` if connections fail.
+> **Managed Postgres (Supabase, Neon, Railway):** Use the connection string
+> they give you.  If connections fail, try adding `?sslmode=require` to the URL.
 
 > **PostgreSQL 15+ schema permissions:** If Ponder fails with
-> `permission denied for schema public`, the database user lacks `CREATE`
-> privilege on the schema (PG 15 revoked this by default).  Grant it once:
-> ```bash
-> sudo -u postgres psql -d ponder -c "GRANT ALL ON SCHEMA public TO ponder;"
+> `permission denied for schema public`, run this once on the database:
+> ```sql
+> GRANT ALL ON SCHEMA public TO ponder;
 > ```
-> On managed databases, look for a "Schema privileges" option in the dashboard,
-> or connect as the admin user and run the `GRANT` SQL manually.
+> On managed databases, look for a "Schema privileges" option in the dashboard.
 
-Then run:
+### Start
 
 ```bash
 pnpm start
 ```
 
-You can deploy to Railway, Render, Fly.io, or any Node.js-capable host.
-Set all environment variables in the hosting platform's secrets/env dashboard.
+**Popular hosting options:**
+- [Railway](https://railway.app) — add a Postgres service and a Node.js service, set env vars in the dashboard
+- [Render](https://render.com) — Web Service + Render Postgres (free tier available)
+- [Fly.io](https://fly.io) — `fly launch` then `fly postgres create`
 
-> **Schema conflicts:** If you run two instances pointing at the same database,
+> **Schema conflicts:** If you run two Ponder instances against the same database,
 > give each a different `DATABASE_SCHEMA` (e.g. `staging`, `prod`).
-> Two instances **cannot** share the same schema simultaneously."""
+> Two instances cannot share the same schema at the same time."""
     else:
-        prod_section = """\
-## Step 6 — Production deployment
+        prod_section = f"""\
+## Step {step_num_prod} — Production deployment
 
-PGlite is for **development only** — it does not support `ponder start`.
-Before deploying to production you must switch to PostgreSQL:
+PGlite works great for development but **does not support `pnpm start`**.
+Before deploying to production you must switch to a real PostgreSQL database.
 
-### 6a — Add Postgres to `ponder.config.ts`
+### 7a — Create a PostgreSQL database
 
-In `ponder.config.ts`, add a `database` block inside `createConfig({{ ... }})`:
+Follow the PostgreSQL setup instructions from Step 3 of the postgres version
+of this guide, or use a managed service (easiest):
+
+- [Supabase](https://supabase.com) — free tier, gives you a connection string
+- [Neon](https://neon.tech) — free tier, serverless Postgres
+- [Railway](https://railway.app) — add a Postgres service, get a connection string
+
+### 7b — Add Postgres to `ponder.config.ts`
+
+Open `ponder.config.ts` and add a `database` block:
 
 ```typescript
 export default createConfig({{
@@ -895,137 +927,245 @@ export default createConfig({{
     kind: "postgres",
     connectionString: process.env.DATABASE_URL,
   }},
-  // ... rest of your config
+  // ... rest of the config stays the same
 }});
 ```
 
-### 6b — Set environment variables
+### 7c — Set environment variables
 
-In `.env.local` (or your hosting platform's secrets dashboard), add:
+Add these to `.env.local` (local) or your hosting platform's secrets dashboard
+(production):
 
 ```
 DATABASE_URL=postgresql://ponder:yourpassword@host:5432/ponder
 DATABASE_SCHEMA=public
+{rpc_env_lines}
 ```
 
-> **Cloud Postgres (Supabase, Neon, Railway…):** These services often require
-> SSL — add `?sslmode=require` to your `DATABASE_URL` if connections fail.
+> If your Postgres provider requires SSL, add `?sslmode=require` to the URL.
 
-`DATABASE_SCHEMA` is **required** by `ponder start`.  It names the Postgres
-schema (namespace) where Ponder will create its tables.  `public` is a safe
-default for a single deployment; use different names for staging vs production.
+`DATABASE_SCHEMA` names the namespace inside the database where Ponder creates
+its tables.  `public` is fine for a single instance.
 
-### 6c — Start
+### 7d — Start
 
 ```bash
 pnpm start
-```
-
-Popular hosting options: Railway, Render, Fly.io (all support Node.js + Postgres)."""
+```"""
 
     return f"""\
 # How to Run "{project_name}" with Ponder
 
-This guide walks you through installing and running your generated Ponder
-indexer from a clean machine.
+**What this is:** Ponder is a blockchain indexer.  It connects to the Ethereum
+network (or other EVM chains), reads every event emitted by the smart contracts
+you configured, runs your handler code for each event, and stores the results in
+a database.  Once it's running, you can query all that data instantly through a
+GraphQL API — no waiting for RPC calls, no parsing raw transaction logs yourself.
+
+**What you'll end up with:**
+- A running indexer that stays up to date with the chain in real time
+- A GraphQL API at `http://localhost:42069/graphql`
+- An interactive query playground in your browser where you can explore the data
 {ordering_note}{setup_note}
 
 ---
 
-## Step 1 — Install Node.js & pnpm
+## Step 1 — Install Node.js and pnpm
 
-Ponder requires **Node.js 18 or later** and **pnpm**.
+Ponder requires **Node.js 18 or later**.  The easiest way to install it is via
+`nvm` (Node Version Manager), which lets you switch Node versions without
+touching your system install.
 
 ```bash
-# Install Node via nvm (recommended)
+# 1. Install nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-nvm install 20 && nvm use 20
 
-# Install pnpm
+# 2. Close and reopen your terminal, then install Node 20
+nvm install 20
+nvm use 20
+
+# 3. Install pnpm (the package manager Ponder uses)
 npm install -g pnpm
 
-# Verify
-node --version   # v20.x.x
-pnpm --version   # 8.x.x or later
+# 4. Verify everything installed correctly
+node --version    # should print v20.x.x
+pnpm --version    # should print 8.x.x or later
+```
+
+If `nvm` is not found after reopening the terminal, run:
+```bash
+source ~/.bashrc    # Linux / WSL
+source ~/.zshrc     # macOS with zsh
 ```
 
 ---
 
-{step2}
+{step_rpc}
 
 ---
 
-## Step 3 — Install Ponder and dependencies
+{step_db}
 
-This installs Ponder itself (as a project dependency) along with all other
-required packages.
+---
+
+## Step 4 — Install project dependencies
+
+This downloads Ponder and all the other packages this project needs.
 
 ```bash
 cd "{output_dir}"
 pnpm install
 ```
 
-> **Note:** pnpm may prompt you to approve build scripts for `esbuild` (a
-> bundler used internally by Ponder). If you see a warning like
-> *"Ignored build scripts: esbuild@x.x.x"*, run:
->
+This may take a minute.  When it finishes you should see something like
+`Done in Xs`.
+
+> **"Ignored build scripts: esbuild"** — if you see this warning, run:
 > ```bash
 > pnpm approve-builds
 > ```
->
-> Approve all `esbuild` entries — they are safe. Ponder may not start
+> Select all `esbuild` entries and approve them.  Ponder may not start
 > correctly without this step.
 
 ---
 
-## Step 4 — Run the indexer (development mode)
-
-Use `pnpm dev` for local development.  **Do not use `pnpm start` yet** — that
-is for production and has extra requirements (see Step 6).
+## Step 5 — Start the indexer
 
 ```bash
 pnpm dev
 ```
 
-Ponder will:
-1. Sync historical events from the configured `startBlock` to the chain tip.
-2. Start a GraphQL API at <http://localhost:42069/graphql>.
-3. Hot-reload handlers when you edit `src/index.ts`.
-
 > **`pnpm dev` vs `pnpm start`:**
-> - `pnpm dev` — development mode with hot-reload.  If this project uses PGlite
->   (the default), no Postgres is needed and `DATABASE_SCHEMA` is not required.
->   If it was generated with PostgreSQL, `pnpm dev` also uses your `DATABASE_URL`.
-> - `pnpm start` — production mode; **always requires** PostgreSQL (`DATABASE_URL`)
->   and an explicit schema (`DATABASE_SCHEMA`).  Running `pnpm start` without
->   these set will fail with *"Database schema required"*.
+> - `pnpm dev` — for local development.  Supports hot-reload (automatically
+>   restarts when you edit handler code).  Uses PGlite if no database config
+>   is set, otherwise uses your `DATABASE_URL`.
+> - `pnpm start` — for production servers only.  Always requires PostgreSQL
+>   and `DATABASE_SCHEMA`.  Do not use this for local development.
+
+### What you'll see in the terminal
+
+A healthy startup looks like this:
+
+```
+INFO  Connected to database type=postgres ...
+INFO  Connected to JSON-RPC chain=mainnet ...
+INFO  Started syncing ...  startBlock=18000000
+```
+
+Then it will show a progress bar as it works through historical blocks:
+
+```
+INFO  Syncing ... 12% (block 18120000 / 19000000)
+INFO  Syncing ... 34% (block 18620000 / 19000000)
+```
+
+**This can take a long time** (minutes to hours) depending on how many blocks
+it needs to process.  The further back your `startBlock` is, the longer it takes.
+Leave the terminal open and let it run.
+
+Once it catches up to the current block it will print:
+
+```
+INFO  Realtime sync started
+```
+
+At that point your data is live and the GraphQL API is ready to query.
+
+### How to stop the indexer
+
+Press **Ctrl + C** in the terminal.  Your data is saved in the database and
+will still be there when you restart.  The next time you run `pnpm dev` or
+`pnpm start`, Ponder will pick up from where it left off.
 
 ---
 
-## Step 5 — Query the data
+## Step 6 — View and query your data
 
-Open <http://localhost:42069/graphql> in your browser (or use `curl`) to
-query the indexed data with GraphQL.
+Once the indexer is running (even before it finishes syncing historical data),
+open your browser and go to:
 
-Example:
+**<http://localhost:42069/graphql>**
+
+You will see the **GraphiQL playground** — an interactive query editor built
+into Ponder.  It looks like a split-screen text editor.
+
+### What is GraphQL?
+
+GraphQL is a query language for APIs.  Instead of fixed endpoints like REST
+(`/api/transfers`, `/api/users`), you write a query that describes exactly which
+fields you want, and the API returns just those fields.
+
+### Your first query
+
+Click in the left panel of the playground and type:
 
 ```graphql
 {{
   {example_table}(limit: 10) {{
     items {{
-      id
-      chain
+      {fields_str}
     }}
   }}
 }}
 ```
 
-{chain_note}
+Then press the **▶ Run** button (or Ctrl+Enter).  The right panel will show
+the results as JSON.
 
-> **Suffix-retry inserts:** If an entity with the same ID was already inserted,
-> the generated handler retries with `-1`, `-2`, … appended to the ID until the
-> insert succeeds.  This prevents duplicate-key errors from silently dropping
-> events.
+### Discover all available tables and fields
+
+Click the **"Schema"** tab on the right side of the playground (or the book
+icon).  This shows every table and every field available to query — it's
+generated automatically from the entities you defined on the canvas.
+
+You can also click **"Docs"** to browse the full auto-generated API documentation.
+
+### Useful query patterns
+
+**Get the most recent 20 records:**
+```graphql
+{{
+  {example_table}(limit: 20, orderBy: "id", orderDirection: "desc") {{
+    items {{
+      {fields_str}
+    }}
+  }}
+}}
+```
+
+**Filter by chain (if you index multiple networks):**
+```graphql
+{{
+  {example_table}(where: {{ chain: "mainnet" }}, limit: 10) {{
+    items {{
+      {fields_str}
+    }}
+  }}
+}}
+```
+
+**Get the total count:**
+```graphql
+{{
+  {example_table}(limit: 1) {{
+    totalCount
+  }}
+}}
+```
+
+> **Auto `chain` field:** Every table has a `chain` column automatically added
+> by the generator (`chain: context.chain.name` on every insert).  Use it to
+> separate data from different networks in your queries.
+
+### Query via curl (command line)
+
+If you prefer the command line over the browser playground:
+
+```bash
+curl -X POST http://localhost:42069/graphql \\
+  -H "Content-Type: application/json" \\
+  -d '{{"query": "{{ {example_table}(limit: 5) {{ items {{ {" ".join(example_fields)} }} }} }}"}}'
+```
 
 ---
 
@@ -1035,15 +1175,37 @@ Example:
 
 ## Quick reference
 
-| Command        | Description                                    |
-|----------------|------------------------------------------------|
-| `pnpm dev`     | Start indexer + GraphQL API with hot-reload    |
-| `pnpm start`   | Start indexer in production mode               |
-| `pnpm codegen` | Regenerate TypeScript types from schema        |
+| Command        | Description                                      |
+|----------------|--------------------------------------------------|
+| `pnpm dev`     | Start indexer with hot-reload (development)      |
+| `pnpm start`   | Start indexer in production mode                 |
+| `pnpm codegen` | Regenerate TypeScript types after schema changes |
+| Ctrl + C       | Stop the indexer                                 |
+
+| URL | What it is |
+|---|---|
+| `http://localhost:42069/graphql` | GraphiQL playground + GraphQL API |
 
 ---
 
 ## Troubleshooting
+
+**Indexing is slow / taking a long time**
+→ This is normal.  The time depends on how many blocks Ponder needs to process.
+  If `startBlock` is set to a very early block number, it may take hours.
+  To speed up: open `ponder.config.ts`, find your contract's `startBlock`,
+  and set it to a more recent block (closer to the current block number).
+  You can look up a contract's deployment block on Etherscan.
+
+**GraphQL returns empty results**
+→ The indexer may still be syncing.  Check the terminal — if it still shows
+  a progress percentage, wait until it reaches 100% (or at least until it
+  has passed the blocks where your events occurred).  Alternatively, query
+  `totalCount` to see if any records exist yet.
+
+**GraphQL playground shows "Network error"**
+→ The indexer is not running.  Start it with `pnpm dev` and wait for the
+  `Realtime sync started` line before opening the playground.
 
 **`Error: Invalid RPC URL`**
 → Check that your `PONDER_RPC_URL_*` variable(s) are set in `.env.local` and
@@ -1051,10 +1213,8 @@ Example:
   {", ".join(f"`{v}`" for v in rpc_vars)}
 
 **`Peer authentication failed for user "postgres"`** (when running `psql -U postgres`)
-→ On Linux, PostgreSQL uses *peer authentication* by default — it checks that
-  your Linux username matches the database username.  You cannot log in as the
-  `postgres` database user unless you are also the `postgres` Linux user.
-  Use `sudo` to switch:
+→ On Linux, PostgreSQL only allows you to log in as the `postgres` database user
+  if you are also the `postgres` Linux system user.  Use `sudo` instead:
   ```bash
   sudo -u postgres psql
   ```
@@ -1064,82 +1224,49 @@ Example:
   ```
   DATABASE_SCHEMA=public
   ```
-  Note: `pnpm dev` does not need this; only `pnpm start` requires it.
+  Note: only `pnpm start` requires this — `pnpm dev` does not.
 
 **`Error: DATABASE_URL is not set`**{' (only relevant if you switch to postgres)' if not use_postgres else ''}
-→ Set `DATABASE_URL` in your `.env.local` file (or your deployment platform's
-  environment variable dashboard).
+→ Add `DATABASE_URL` to `.env.local`.  See Step 3 for the correct format.
 
-**`Connection terminated unexpectedly`** (repeats 5 times with increasing delays, then exits)
-→ Ponder established a TCP connection to PostgreSQL but PostgreSQL immediately
-  closed it.  This is **not** an SSL issue — Ponder already disables SSL
-  internally.  Follow this diagnostic checklist in order:
+**`Connection terminated unexpectedly`** (repeats 5 times then exits)
+→ Ponder connected to PostgreSQL but was immediately rejected.  Work through
+  this checklist:
 
-  **Step A — Confirm PostgreSQL is running:**
-  ```bash
-  sudo systemctl status postgresql
-  ```
-  If the output says `inactive` or `failed`, start it:
-  ```bash
-  sudo systemctl start postgresql
-  ```
-  Then try `pnpm start` again.
-
-  **Step B — Read the PostgreSQL rejection reason:**
-  ```bash
-  sudo journalctl -u postgresql -n 30
-  ```
-  Look for lines like `FATAL:` — they tell you exactly why the connection was
-  rejected (wrong password, database doesn't exist, access denied, etc.).
-
-  **Step C — Test the credentials directly:**
-  ```bash
-  psql "postgresql://ponder:yourpassword@localhost:5432/ponder"
-  ```
-  Replace `yourpassword` with the actual password you used in `CREATE USER`.
-  - If this succeeds (you get a `ponder=>` prompt) → PostgreSQL is fine,
-    but there may be a `DATABASE_URL` typo in `.env.local`.  Double-check
-    the password matches exactly.
-  - If you get **"password authentication failed"** → the password is wrong.
-    Reset it:
-    ```bash
-    sudo -u postgres psql -c "ALTER USER ponder WITH PASSWORD 'newpassword';"
-    ```
-    Then update `DATABASE_URL` in `.env.local` with the new password.
-  - If you get **"database ponder does not exist"** → recreate it:
-    ```bash
-    sudo -u postgres psql -c "CREATE DATABASE ponder;"
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ponder TO ponder;"
-    ```
-  - If you get **"connection refused"** → PostgreSQL is not running.
-    See Step A.
-
-  **Step D — Check `.env.local` is being read:**
-  Ponder reads `.env.local`, not `.env`.  Confirm the file exists in the
-  project root:
-  ```bash
-  ls -la .env.local
-  cat .env.local   # verify DATABASE_URL and DATABASE_SCHEMA are present
-  ```
+  1. Is PostgreSQL running?
+     ```bash
+     sudo systemctl status postgresql
+     sudo systemctl start postgresql   # if inactive
+     ```
+  2. Check the PostgreSQL log for the real error:
+     ```bash
+     sudo journalctl -u postgresql -n 30
+     ```
+  3. Test the credentials directly:
+     ```bash
+     psql "postgresql://ponder:yourpassword@localhost:5432/ponder"
+     ```
+     - `password authentication failed` → wrong password; reset with:
+       `sudo -u postgres psql -c "ALTER USER ponder WITH PASSWORD 'new';"`
+     - `database does not exist` → re-run Step 3b
+     - `connection refused` → PostgreSQL is not running (see step 1 above)
+  4. Make sure `.env.local` exists and has the correct `DATABASE_URL`:
+     ```bash
+     cat .env.local
+     ```
 
 **`permission denied for schema public`**
-→ PostgreSQL 15+ revoked the default `CREATE` privilege on the `public` schema.
-  Run this once to grant it:
+→ PostgreSQL 15+ revoked the default schema `CREATE` privilege.  Run:
   ```bash
   sudo -u postgres psql -d ponder -c "GRANT ALL ON SCHEMA public TO ponder;"
   ```
-  Then retry `pnpm start`.
 
 **`SyntaxError` in generated handler code**
-→ Regenerate from the canvas (some transforms may need manual adjustment for
-   complex type combinations).
-
-**Indexing stuck at 0%**
-→ `startBlock` may be set too early.  Update `ponder.config.ts` to use the
-   actual contract deployment block.
+→ Regenerate from the canvas.  Some complex type combinations may need
+  manual adjustment in `src/index.ts`.
 
 **BigDecimal fields show as text**
 → Ponder has no native arbitrary-precision decimal type.  BigDecimal fields
-   are stored as text.  To do arithmetic, parse the value with a library such
+   are stored as text strings.  To do arithmetic, parse with a library such
    as `decimal.js`, or store values in base units (e.g. wei as BigInt).
 """
