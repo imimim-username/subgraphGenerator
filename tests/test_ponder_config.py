@@ -124,6 +124,112 @@ class TestBasicStructure:
         assert "startBlock" not in out
 
 
+# ── startBlock — Etherscan auto-detection integration ──────────────────────────
+
+class TestStartBlockEtherscanIntegration:
+    """Verify that render_ponder_config calls get_contract_deployment_block when
+    startBlock is 0 and a real address is present, then uses the result.
+
+    All network calls are mocked so no real API key is needed.
+    """
+
+    # The function is lazily imported inside the ponder_config body, so we must
+    # patch it at its *source* module, not at the ponder_config namespace.
+    _TARGET = "subgraph_wizard.abi.etherscan.get_contract_deployment_block"
+
+    def test_etherscan_detected_block_emitted(self, monkeypatch):
+        """When Etherscan returns a block number it must appear in the output."""
+        from unittest.mock import patch
+        with patch(self._TARGET, return_value=14_265_505) as mock_fn:
+            out = render_ponder_config(_cfg(
+                networks=[_net("mainnet", _contract_instances(
+                    _inst(address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", startBlock=0)
+                ))]
+            ))
+        mock_fn.assert_called_once()
+        assert "startBlock: 14265505" in out
+
+    def test_etherscan_failure_omits_startblock(self, monkeypatch):
+        """When Etherscan returns None (failure/no key) no startBlock is emitted."""
+        from unittest.mock import patch
+        with patch(self._TARGET, return_value=None):
+            out = render_ponder_config(_cfg(
+                networks=[_net("mainnet", _contract_instances(
+                    _inst(address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", startBlock=0)
+                ))]
+            ))
+        assert "startBlock" not in out
+
+    def test_etherscan_not_called_for_zero_address(self):
+        """Zero address (0x000…) must not trigger an Etherscan lookup."""
+        from unittest.mock import patch
+        zero = "0x0000000000000000000000000000000000000000"
+        with patch(self._TARGET) as mock_fn:
+            render_ponder_config(_cfg(
+                networks=[_net("mainnet", _contract_instances(
+                    _inst(address=zero, startBlock=0)
+                ))]
+            ))
+        mock_fn.assert_not_called()
+
+    def test_etherscan_not_called_for_empty_address(self):
+        """Empty address must not trigger an Etherscan lookup."""
+        from unittest.mock import patch
+        with patch(self._TARGET) as mock_fn:
+            render_ponder_config(_cfg(
+                networks=[_net("mainnet", _contract_instances(
+                    _inst(address="", startBlock=0)
+                ))]
+            ))
+        mock_fn.assert_not_called()
+
+    def test_etherscan_not_called_when_startblock_already_set(self):
+        """If the user already set a startBlock, Etherscan must not be called."""
+        from unittest.mock import patch
+        with patch(self._TARGET) as mock_fn:
+            render_ponder_config(_cfg(
+                networks=[_net("mainnet", _contract_instances(
+                    _inst(address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", startBlock=99999)
+                ))]
+            ))
+        mock_fn.assert_not_called()
+
+    def test_etherscan_called_per_instance_not_per_contract(self):
+        """Each instance with startBlock=0 triggers one Etherscan call."""
+        from unittest.mock import patch
+        with patch(self._TARGET, side_effect=[10_000_000, 20_000_000]) as mock_fn:
+            render_ponder_config(_cfg(
+                networks=[_net("mainnet", {"Token": {"instances": [
+                    {"label": "a", "address": "0xAAAA", "startBlock": 0},
+                    {"label": "b", "address": "0xBBBB", "startBlock": 0},
+                ]}})]
+            ))
+        assert mock_fn.call_count == 2
+
+    def test_multichain_per_chain_startblock_emitted(self):
+        """Multi-chain format: each chain's startBlock appears inside its sub-object."""
+        from unittest.mock import patch
+        with patch(self._TARGET, return_value=None):
+            out = render_ponder_config(_cfg(
+                networks=[
+                    _net("mainnet",  {"Token": {"instances": [_inst("0xAAA", startBlock=14_000_000)]}}),
+                    _net("optimism", {"Token": {"instances": [_inst("0xBBB", startBlock=0)]}})
+                ]
+            ))
+        # mainnet instance has an explicit startBlock — must appear in output
+        assert "startBlock: 14000000" in out
+        # optimism instance has startBlock=0 — must not emit any startBlock
+        # (check by inspecting the contracts section directly)
+        contracts_section = out[out.index("contracts:"):]
+        # Inside the contracts section, mainnet has startBlock but optimism does not
+        mainnet_chunk_start = contracts_section.index("mainnet:")
+        optimism_chunk_start = contracts_section.index("optimism:")
+        mainnet_chunk = contracts_section[mainnet_chunk_start:optimism_chunk_start]
+        assert "startBlock: 14000000" in mainnet_chunk
+        optimism_chunk = contracts_section[optimism_chunk_start:]
+        assert "startBlock" not in optimism_chunk
+
+
 # ── endBlock ───────────────────────────────────────────────────────────────────
 
 class TestEndBlock:
