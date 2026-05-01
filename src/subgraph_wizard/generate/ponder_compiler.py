@@ -55,10 +55,11 @@ def _event_param_expr_ts(port_id: str) -> str:
     if port_id.startswith("implicit-"):
         rest = port_id[len("implicit-"):]
         mapping = {
-            "address":         "event.log.address",
-            "block-number":    "event.block.number",
-            "block-timestamp": "Number(event.block.timestamp)",
-            "tx-hash":         "event.transaction.hash",
+            "address":          "event.log.address",
+            "instance-address": "event.log.address",  # multi-instance: address of emitting contract
+            "block-number":     "event.block.number",
+            "block-timestamp":  "Number(event.block.timestamp)",
+            "tx-hash":          "event.transaction.hash",
         }
         return mapping.get(rest, f"event.{rest}")
 

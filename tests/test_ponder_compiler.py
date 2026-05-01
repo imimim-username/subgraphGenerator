@@ -1,7 +1,11 @@
 """Tests for generate/ponder_compiler.py — PonderCompiler and compile_ponder."""
 
 import pytest
-from subgraph_wizard.generate.ponder_compiler import compile_ponder, PonderCompiler
+from subgraph_wizard.generate.ponder_compiler import (
+    compile_ponder,
+    PonderCompiler,
+    _event_param_expr_ts,
+)
 
 # ── Config builder helpers ─────────────────────────────────────────────────────
 
@@ -427,3 +431,87 @@ class TestImplicitPorts:
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "event.block.number" in src
+
+
+# ── implicit-instance-address (multi-chain contract address) ──────────────────
+#
+# Bug: the compiler emitted `event.instance-address` (hyphen = subtraction in
+# JS/TS) which caused `ReferenceError: address is not defined` at runtime.
+# The correct expression is `event.log.address`.
+
+class TestImplicitInstanceAddress:
+    """Regression tests for the event.instance-address bug (GH: addr-subtraction)."""
+
+    def test_expr_fn_maps_instance_address_to_log_address(self):
+        """_event_param_expr_ts must return event.log.address, not event.instance-address."""
+        assert _event_param_expr_ts("implicit-instance-address") == "event.log.address"
+
+    def test_expr_fn_does_not_return_hyphenated_expression(self):
+        """The broken expression must never be produced."""
+        result = _event_param_expr_ts("implicit-instance-address")
+        assert "instance-address" not in result, (
+            f"Hyphenated expression would be parsed as subtraction: {result!r}"
+        )
+
+    def test_implicit_instance_address_wired_to_entity_field(self):
+        """Generator must emit event.log.address when instance-address port is wired to a field."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "contractAddr", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "MYT", events=[_event("Submit")]),
+            _entity("e1", "Submission", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Submit", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-contractAddr"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src
+
+    def test_no_broken_subtraction_expression_in_entity_handler(self):
+        """The broken `event.instance-address` expression must not appear in output."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "contractAddr", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "MYT", events=[_event("Submit")]),
+            _entity("e1", "Submission", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Submit", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-contractAddr"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.instance-address" not in src
+
+    def test_implicit_instance_address_as_contractread_address(self):
+        """Regression: the exact crash scenario — instance-address used as readContract address."""
+        # This mirrors `MYT:Submit` calling totalAssets() with instance-address as `address`.
+        read_fn = _read_fn("totalAssets", inputs=[], outputs=[{"name": "", "type": "uint256"}])
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "total", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "MYT", events=[_event("Submit")], read_fns=[read_fn]),
+            {"id": "cr1", "type": "contractread", "position": {}, "data": {"contractNodeId": "c1", "fnIndex": 0}},
+            _entity("e1", "SubmitEvent", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Submit", "e1", "trigger"),
+            _edge("ed2", "cr1", "out-result", "e1", "field-total"),
+            # Wire instance-address as the bind-address for the contractread
+            _edge("ed3", "c1", "implicit-instance-address", "cr1", "bind-address"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src
+        assert "event.instance-address" not in src
+        # Must be valid: no bare `address` subtraction
+        assert "instance - address" not in src
+
+    def test_same_result_as_implicit_address(self):
+        """implicit-instance-address and implicit-address should both resolve to event.log.address."""
+        assert _event_param_expr_ts("implicit-address") == _event_param_expr_ts("implicit-instance-address")
