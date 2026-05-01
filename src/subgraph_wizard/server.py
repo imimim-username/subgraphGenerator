@@ -726,6 +726,7 @@ def _generate_ponder(
         render_ponder_tsconfig,
         render_ponder_package_json,
         render_ponder_env_example,
+        render_ponder_api_index,
         render_ponder_howto,
     )
 
@@ -780,6 +781,12 @@ def _generate_ponder(
             abi_path = abis_dir / f"{contract_name}Abi.ts"
             abi_path.write_text(abi_ts, encoding="utf-8")
             written.append(str(abi_path))
+
+    # src/api/index.ts  (required by Ponder as the HTTP/API entry point)
+    api_dir = output_dir / "src" / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    (api_dir / "index.ts").write_text(render_ponder_api_index(), encoding="utf-8")
+    written.append(str(api_dir / "index.ts"))
 
     # src/index.ts  (event handlers) — compile_ponder keys include the "src/" prefix
     ts_files = compile_ponder(config_dict)

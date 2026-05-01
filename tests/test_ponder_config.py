@@ -485,3 +485,95 @@ class TestMultiAddressAndEnvExample:
         from subgraph_wizard.generate.ponder_config import render_ponder_env_example
         out = render_ponder_env_example({"networks": [{"network": "mainnet", "contracts": {}}]})
         assert "PONDER_WS_URL" not in out
+
+
+# ── render_ponder_api_index ────────────────────────────────────────────────────
+
+class TestRenderPonderApiIndex:
+    """Tests for render_ponder_api_index — the src/api/index.ts stub.
+
+    Ponder requires ``src/api/index.ts`` to exist and export a Hono app.
+    Missing this file causes a build error:
+        "API endpoint file not found. Create a file at src/api/index.ts."
+    """
+
+    def test_imports_hono(self):
+        """Must import Hono from 'hono' (the HTTP framework bundled with Ponder)."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        assert 'from "hono"' in out or "from 'hono'" in out
+
+    def test_exports_default(self):
+        """Must have a default export — Ponder picks it up as the app entry point."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        assert "export default" in out
+
+    def test_is_valid_typescript(self):
+        """Basic sanity: no syntax clues that would cause immediate parse errors."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        # Must be a non-empty string
+        assert isinstance(out, str) and len(out) > 0
+        # No stray Python-isms
+        assert "def " not in out
+        assert "import " in out  # at least one import
+
+    def test_is_idempotent(self):
+        """Calling render_ponder_api_index twice returns identical output."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        assert render_ponder_api_index() == render_ponder_api_index()
+
+    def test_hono_app_instantiated(self):
+        """The file must instantiate a Hono app (new Hono() or Hono())."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_api_index
+        out = render_ponder_api_index()
+        assert "Hono()" in out or "new Hono" in out
+
+
+# ── render_ponder_howto — .env.local ──────────────────────────────────────────
+
+class TestHowtoEnvLocal:
+    """Verify PONDER_HOWTO.md instructs users to use .env.local, not .env.
+
+    Ponder reads environment variables from .env.local (following the Next.js
+    convention).  Using a plain .env file will cause silent failures where RPC
+    URLs are undefined and connections fail immediately.
+    """
+
+    def test_howto_pglite_uses_env_local(self):
+        """PGlite path: HOWTO must say cp .env.example .env.local."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_howto
+        howto = render_ponder_howto("my-app", "/out", {})
+        assert ".env.local" in howto
+
+    def test_howto_postgres_uses_env_local(self):
+        """Postgres path: HOWTO must also say .env.local."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_howto
+        cfg = {"ponder_settings": {"database": "postgres"}}
+        howto = render_ponder_howto("my-app", "/out", cfg)
+        assert ".env.local" in howto
+
+    def test_howto_pglite_does_not_say_cp_to_plain_env(self):
+        """HOWTO must NOT tell users to create a plain .env (would be ignored by Ponder)."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_howto
+        howto = render_ponder_howto("my-app", "/out", {})
+        # 'cp .env.example .env' followed by a newline or backtick = wrong instruction
+        assert "cp .env.example .env\n" not in howto
+        assert "cp .env.example .env`" not in howto
+
+    def test_howto_postgres_does_not_say_cp_to_plain_env(self):
+        """Postgres path HOWTO must also not say 'cp .env.example .env'."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_howto
+        cfg = {"ponder_settings": {"database": "postgres"}}
+        howto = render_ponder_howto("my-app", "/out", cfg)
+        assert "cp .env.example .env\n" not in howto
+        assert "cp .env.example .env`" not in howto
+
+    def test_howto_env_local_note_present(self):
+        """HOWTO must include an explicit note that Ponder reads .env.local."""
+        from subgraph_wizard.generate.ponder_config import render_ponder_howto
+        howto = render_ponder_howto("my-app", "/out", {})
+        # Should contain something like "Ponder reads .env.local"
+        assert ".env.local" in howto and ".env.example" in howto
+

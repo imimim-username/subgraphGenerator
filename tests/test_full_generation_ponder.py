@@ -116,6 +116,7 @@ def _full_cfg(nodes, edges, networks=None, ponder_settings=None, name="my-erc20"
 
 def _generate(cfg) -> dict[str, str]:
     """Run the full Ponder generation pipeline, return {filename: content}."""
+    from subgraph_wizard.generate.ponder_config import render_ponder_api_index
     outputs = {}
     outputs["ponder.config.ts"] = render_ponder_config(cfg)
     outputs["ponder.schema.ts"] = render_ponder_schema(cfg)
@@ -123,6 +124,7 @@ def _generate(cfg) -> dict[str, str]:
     outputs["tsconfig.json"] = render_ponder_tsconfig()
     outputs["package.json"] = render_ponder_package_json(cfg.get("subgraph_name", ""))
     outputs[".env.example"] = render_ponder_env_example(cfg)
+    outputs["src/api/index.ts"] = render_ponder_api_index()
     outputs["PONDER_HOWTO.md"] = render_ponder_howto(cfg.get("subgraph_name", ""), "/out", cfg)
     outputs.update(compile_ponder(cfg))  # adds src/index.ts
     for node in cfg.get("nodes", []):
@@ -268,6 +270,30 @@ class TestSimpleERC20Transfer:
         """PGlite config should mention zero-config embedded database."""
         howto = outputs["PONDER_HOWTO.md"]
         assert "PGlite" in howto or "embedded" in howto
+
+    def test_howto_uses_env_local_not_env(self, outputs):
+        """HOWTO must instruct users to use .env.local (Ponder's convention)."""
+        howto = outputs["PONDER_HOWTO.md"]
+        assert ".env.local" in howto
+        # Must NOT tell users to create a plain .env file
+        assert "cp .env.example .env\n" not in howto
+        assert "cp .env.example .env`" not in howto
+
+    def test_api_index_ts_is_generated(self, outputs):
+        """src/api/index.ts must be present — Ponder requires it as the API entry point."""
+        assert "src/api/index.ts" in outputs
+
+    def test_api_index_ts_exports_hono_app(self, outputs):
+        """src/api/index.ts must export a Hono app."""
+        api = outputs["src/api/index.ts"]
+        assert "hono" in api.lower() or "Hono" in api
+        assert "export default" in api
+
+    def test_api_index_ts_is_valid_typescript(self, outputs):
+        """src/api/index.ts must import from 'hono' and export a default."""
+        api = outputs["src/api/index.ts"]
+        assert 'from "hono"' in api or "from 'hono'" in api
+        assert "export default" in api
 
 
 # ── Test 2: Aggregate entity (running total with math) ───────────────────────

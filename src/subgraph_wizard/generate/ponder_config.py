@@ -380,6 +380,30 @@ def render_ponder_env_dts() -> str:
     return '/// <reference types="ponder/env" />\n'
 
 
+def render_ponder_api_index() -> str:
+    """Return the content of ``src/api/index.ts``.
+
+    Ponder requires this file to exist — even when no custom API routes are
+    needed — as the entry point for the Hono-based HTTP layer.  The generated
+    file exports a minimal Hono app that users can extend with custom
+    endpoints (REST, tRPC, etc.).
+
+    Returns:
+        TypeScript source string.
+    """
+    return """\
+import { Hono } from "hono";
+
+// Add custom API endpoints below.
+// Ponder's built-in GraphQL API is available at /graphql regardless.
+// See: https://ponder.sh/docs/api-reference/ponder/api-endpoints
+
+const app = new Hono();
+
+export default app;
+"""
+
+
 def render_ponder_tsconfig() -> str:
     """Return a tsconfig.json matching the official Ponder project template."""
     config = {
@@ -534,14 +558,14 @@ def render_ponder_howto(
         step2 = f"""\
 ## Step 2 — Configure environment variables
 
-Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env.local`:
 
 ```bash
 cd "{output_dir}"
-cp .env.example .env
+cp .env.example .env.local
 ```
 
-Then fill in **all** of the following in `.env`:
+Then fill in **all** of the following in `.env.local`:
 
 ```
 # RPC endpoints (one per chain)
@@ -555,25 +579,29 @@ DATABASE_URL=postgresql://user:password@localhost:5432/ponder
 > You need a running Postgres instance before starting the indexer.
 > On macOS: `brew install postgresql && brew services start postgresql`
 > On Linux: `sudo apt install postgresql && sudo systemctl start postgresql`
-> Or use a managed service: Supabase, Railway, Neon, etc."""
+> Or use a managed service: Supabase, Railway, Neon, etc.
+
+> **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename."""
     else:
         step2 = f"""\
 ## Step 2 — Configure your RPC URL
 
-Copy `.env.example` to `.env` and fill in your RPC endpoint(s):
+Copy `.env.example` to `.env.local` and fill in your RPC endpoint(s):
 
 ```bash
 cd "{output_dir}"
-cp .env.example .env
+cp .env.example .env.local
 ```
 
-Edit `.env` and set the following variable(s):
+Edit `.env.local` and set the following variable(s):
 
 ```
 {rpc_lines}
 ```
 
 You can get a free endpoint from [Alchemy](https://alchemy.com) or [Infura](https://infura.io).
+
+> **Note:** Ponder reads `.env.local` (not `.env`).  Make sure you use that filename.
 
 > **Database:** This project uses PGlite (embedded Postgres — zero configuration,
 > data stored in `.ponder/pglite`).  No database setup required for development.
