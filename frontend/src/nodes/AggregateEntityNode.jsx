@@ -44,8 +44,12 @@ function AggFieldRow({
   isDragging, isDragOver,
   onDragStart, onDragOver, onDrop, onDragEnd,
 }) {
-  const inPortId   = isFirst ? 'field-id' : `field-in-${field.name || idx}`;
-  const prevPortId = `field-prev-${field.name || idx}`;
+  // Always derive port IDs from the field *name*, never from the numeric index.
+  // If the field has no name yet the handle is omitted entirely — this prevents
+  // stale numeric-index edges (field-in-2, field-in-3 …) from being created
+  // when the user wires a field before giving it a name.
+  const inPortId   = isFirst ? 'field-id' : (field.name ? `field-in-${field.name}` : null);
+  const prevPortId = field.name ? `field-prev-${field.name}` : null;
   const isList = isListType(field.type);
   const base   = baseType(field.type);
 
@@ -65,14 +69,16 @@ function AggFieldRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      {/* LEFT — input port */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id={inPortId}
-        className="field-port"
-        style={{ left: -6 }}
-      />
+      {/* LEFT — input port (only rendered once the field has a name) */}
+      {inPortId && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id={inPortId}
+          className="field-port"
+          style={{ left: -6 }}
+        />
+      )}
 
       {/* Drag grip (non-id fields only).
           draggable must be on a <div>, not the SVG — SVGs are unreliable
@@ -196,7 +202,7 @@ function AggFieldRow({
           style={{ right: -6 }}
           title="Expose this aggregate's stable ID as an output wire"
         />
-      ) : (
+      ) : prevPortId ? (
         <Handle
           type="source"
           position={Position.Right}
@@ -205,7 +211,7 @@ function AggFieldRow({
           style={{ right: -6 }}
           title={`Previous value of ${field.name}`}
         />
-      )}
+      ) : null}
     </div>
   );
 }
