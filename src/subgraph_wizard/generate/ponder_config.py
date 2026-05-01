@@ -657,6 +657,17 @@ cd "{output_dir}"
 pnpm install
 ```
 
+> **Note:** pnpm may prompt you to approve build scripts for `esbuild` (a
+> bundler used internally by Ponder). If you see a warning like
+> *"Ignored build scripts: esbuild@x.x.x"*, run:
+>
+> ```bash
+> pnpm approve-builds
+> ```
+>
+> Approve all `esbuild` entries — they are safe. Ponder may not start
+> correctly without this step.
+
 ---
 
 ## Step 4 — Run the indexer (development mode)
