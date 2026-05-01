@@ -324,7 +324,31 @@ def get_contract_deployment_block(network: str, address: str) -> int | None:
         logger.debug("No txHash in getcontractcreation result for %s", address)
         return None
 
-    # ── Step 2: resolve the block number from the tx ──────────────────────────
+    # ── Step 1b: prefer blockNumber from the creation response directly ───────
+    # The Etherscan v2 API returns blockNumber in the getcontractcreation
+    # payload.  Using it avoids a second round-trip and works reliably on L2s
+    # (e.g. Optimism) where the proxy/eth_getTransactionByHash endpoint is
+    # unreliable or returns no result.  blockNumber may be decimal or hex.
+    block_str = first.get("blockNumber")
+    if block_str:
+        try:
+            # Try decimal first (Etherscan v2 returns decimal for most chains),
+            # then hex (JSON-RPC proxy style) as a fallback.
+            if str(block_str).startswith("0x"):
+                block = int(block_str, 16)
+            else:
+                block = int(block_str)
+            logger.info(
+                "Auto-detected startBlock %d for %s on %s (from creation tx)",
+                block, address, network,
+            )
+            return block
+        except (ValueError, TypeError):
+            logger.debug("Could not parse blockNumber %r from creation result", block_str)
+            # Fall through to step 2
+
+    # ── Step 2: resolve the block number from the tx (fallback) ───────────────
+    # Only reached when blockNumber was absent from the creation response.
     try:
         resp = _get(
             f"{base}&module=proxy&action=eth_getTransactionByHash"
