@@ -2,21 +2,24 @@
 
 ## What this is
 
-**Subgraph Generator** — a visual drag-and-drop tool for building Ethereum subgraphs for
-[The Graph](https://thegraph.com/) protocol without writing code by hand.
+**Subgraph Generator** — a visual drag-and-drop tool for building blockchain indexers.
+Supports two output modes:
+
+1. **The Graph** — generates AssemblyScript subgraphs (mapping files, `subgraph.yaml`,
+   `schema.graphql`, `networks.json`) deployed to a Graph node.
+2. **Ponder** — generates TypeScript indexers (`ponder.config.ts`, `ponder.schema.ts`,
+   `src/index.ts`, `src/api/index.ts`) running as a self-hosted Node.js process.
 
 Users wire together nodes on a canvas to describe what on-chain data they want to index.
-A **FastAPI** backend compiles the visual graph into **AssemblyScript** mapping files, a
-`subgraph.yaml` manifest, a `schema.graphql`, and a `networks.json` — a complete, deployable
-subgraph project.
+A **FastAPI** backend compiles the visual graph into the appropriate output files.
 
 **Three entry points:**
 
 | Mode | Command | Description |
 |---|---|---|
 | Visual editor | `subgraph-wizard --ui` | Local web UI; drag-and-drop node canvas (primary path) |
-| Interactive wizard | `subgraph-wizard` | Text Q&A flow |
-| Config-driven | `subgraph-wizard --config cfg.json --generate` | Non-interactive / CI |
+| Interactive wizard | `subgraph-wizard` | Text Q&A flow (The Graph only) |
+| Config-driven | `subgraph-wizard --config cfg.json --generate` | Non-interactive / CI (The Graph only) |
 
 ---
 
@@ -26,8 +29,13 @@ subgraph project.
   exposes REST endpoints for ABI parsing, config CRUD, graph validation, and code generation.
 - **Frontend:** React + React Flow (`frontend/`) — the visual canvas. Built with Vite.
   The compiled bundle is committed to `src/subgraph_wizard/static/` and served by FastAPI.
-- **Graph compiler:** `generate/graph_compiler.py` — topological traversal of the node graph;
-  emits AssemblyScript handler functions.
+- **The Graph compiler:** `generate/graph_compiler.py` — topological traversal of the node
+  graph; emits AssemblyScript handler functions.
+- **Ponder compiler:** `generate/ponder_compiler.py` — same graph traversal; emits TypeScript
+  `ponder.on("Contract:Event", ...)` handler functions.
+- **Ponder config/schema generators:** `generate/ponder_config.py`,
+  `generate/ponder_schema.py` — emit `ponder.config.ts`, `ponder.schema.ts`, and all
+  Ponder boilerplate files.
 - **Validator:** `generate/validator.py` — runs on every canvas change via debounced POST to
   `/api/validate`; returns error and warning codes. The Generate button is disabled while
   `has_errors === true`.
@@ -53,11 +61,11 @@ subgraphGenerator/
 │   ├── abi/
 │   │   ├── local.py             # Load ABI from local JSON file
 │   │   ├── paste.py             # Interactive ABI paste
-│   │   ├── etherscan.py         # Fetch ABI from Etherscan-compatible explorer APIs
+│   │   ├── etherscan.py         # Fetch ABI + deployment block from Etherscan-compatible explorer APIs
 │   │   └── utils.py             # ABI parsing, event/read-fn extraction, Solidity→GQL type mapping
 │   ├── generate/
-│   │   ├── orchestrator.py      # CLI generation pipeline
-│   │   ├── graph_compiler.py    # Visual graph → AssemblyScript code
+│   │   ├── orchestrator.py      # CLI generation pipeline (The Graph)
+│   │   ├── graph_compiler.py    # Visual graph → AssemblyScript code (The Graph)
 │   │   ├── validator.py         # Visual graph validation (errors + warnings)
 │   │   ├── networks_json.py     # Write networks.json from visual config
 │   │   ├── subgraph_yaml.py     # Generates subgraph.yaml (CLI and visual modes)
@@ -66,7 +74,10 @@ subgraphGenerator/
 │   │   ├── mappings_stub.py     # Generates stub TypeScript handlers (CLI mode)
 │   │   ├── package_json.py      # Generates package.json
 │   │   ├── project_layout.py    # Creates directory structure
-│   │   └── readme.py            # Generates README for output subgraph
+│   │   ├── readme.py            # Generates README for output subgraph
+│   │   ├── ponder_config.py     # Ponder: ponder.config.ts + all boilerplate (PONDER_HOWTO.md etc.)
+│   │   ├── ponder_schema.py     # Ponder: ponder.schema.ts (onchainTable definitions)
+│   │   └── ponder_compiler.py   # Ponder: src/index.ts event handler functions
 │   ├── static/                  # Pre-built React bundle (committed, served by FastAPI)
 │   └── utils/
 │       ├── fs_utils.py
@@ -74,24 +85,29 @@ subgraphGenerator/
 │       └── prompts_utils.py     # Reusable prompt helpers
 ├── frontend/                    # React + Vite source (contributors only)
 │   ├── src/
-│   │   ├── App.jsx              # Main canvas; save/load/generate/validation wiring
+│   │   ├── App.jsx              # Main canvas; save/load/generate/validation wiring; ponderSettings state
 │   │   ├── nodes/               # ContractNode, EntityNode, AggregateEntityNode,
 │   │   │                        #   MathNode, TypeCastNode, StringConcatNode,
 │   │   │                        #   ConditionalNode, ContractReadNode
 │   │   ├── hooks/
 │   │   │   └── useValidation.js # Debounced POST /api/validate; returns issue maps
 │   │   └── components/
-│   │       ├── HelpPanel.jsx         # Slide-in help reference
-│   │       ├── GenerateModal.jsx     # Directory-picker modal for the Generate action
+│   │       ├── HelpPanel.jsx         # Slide-in help reference (covers both Graph and Ponder modes)
+│   │       ├── GenerateModal.jsx     # Directory-picker modal; Ponder Settings section when in Ponder mode
 │   │       ├── ValidationPanel.jsx   # Collapsible bottom-left issues list
-│   │       ├── NetworksPanel.jsx     # Right-side chain address panel
+│   │       ├── NetworksPanel.jsx     # Right-side chain address panel; endBlock + advanced options
 │   │       └── Toolbar.jsx           # Left-side node palette
 │   ├── vite.config.js           # Proxy /api → :8000 in dev; build → static/
 │   └── package.json
 ├── templates/                   # Jinja2 templates (CLI mode)
-├── tests/                       # 147 passing tests
+├── tests/                       # 1119+ passing tests
 │   ├── test_validator.py        # Visual graph validator tests
 │   ├── test_server.py           # FastAPI endpoint tests
+│   ├── test_ponder_config.py    # ponder_config.py unit + integration tests
+│   ├── test_ponder_compiler.py  # ponder_compiler.py unit tests
+│   ├── test_ponder_schema.py    # ponder_schema.py unit tests
+│   ├── test_full_generation_ponder.py  # End-to-end Ponder generation tests
+│   ├── test_etherscan_deployment_block.py  # Etherscan startBlock detection tests
 │   └── ...
 ├── docs/
 ├── context/
@@ -99,6 +115,129 @@ subgraphGenerator/
 ├── pyproject.toml
 └── .env.example
 ```
+
+---
+
+## Output Modes
+
+### The Graph output
+
+```
+<output-dir>/
+├── subgraph.yaml
+├── schema.graphql
+├── networks.json              ← per-chain addresses + start blocks
+├── package.json               ← npm scripts: codegen / build / deploy
+├── howto.md                   ← step-by-step deployment guide to The Graph Studio
+└── src/mappings/
+    └── {ContractType}.ts      ← compiled AssemblyScript
+```
+
+### Ponder output
+
+```
+<output-dir>/
+├── ponder.config.ts           ← chains{}, contracts{} with addresses + start blocks
+├── ponder.schema.ts           ← onchainTable definitions (one per entity node)
+├── ponder-env.d.ts            ← Ponder environment typings (boilerplate)
+├── tsconfig.json              ← TypeScript project config
+├── package.json               ← pnpm dev / start / codegen scripts
+├── .env.example               ← RPC URL placeholders (one per chain)
+├── PONDER_HOWTO.md            ← step-by-step guide tailored to the canvas settings
+└── src/
+    ├── api/
+    │   └── index.ts           ← Hono app; mounts /graphql and / (GraphiQL)
+    └── index.ts               ← ponder.on("Contract:Event", ...) handler functions
+```
+
+---
+
+## Ponder-Specific Design Notes
+
+### GraphQL endpoint (Ponder ≥ 0.8)
+
+Since Ponder 0.8 the `/graphql` endpoint is **not** served automatically. The generated
+`src/api/index.ts` uses the Hono framework and explicitly mounts `graphql({ db, schema })`
+(imported from `"ponder"`) at both `/graphql` (API) and `/` (GraphiQL playground).
+
+```ts
+import { db } from "ponder:api";
+import schema from "ponder:schema";
+import { graphql } from "ponder";
+import { Hono } from "hono";
+
+const app = new Hono();
+app.use("/graphql", graphql({ db, schema }));
+app.use("/", graphql({ db, schema }));
+export default app;
+```
+
+### Auto `chain` column
+
+`ponder_schema.py` appends a `chain: t.text().notNull()` column after `id` in every
+`onchainTable`. `ponder_compiler.py` then sets `chain: context.chain.name` on every insert,
+so data from different networks is distinguishable without any extra canvas wiring.
+
+> **Note:** Ponder 0.8 renamed `context.network` → `context.chain`. All generated code uses
+> `context.chain.name`.
+
+### Suffix-retry inserts
+
+Ponder rejects duplicate primary keys. The compiler wraps every insert in a retry loop:
+
+```ts
+let __baseId = event.transaction.hash;
+let __id = __baseId;
+let __suffix = 0;
+let __inserted = false;
+while (!__inserted) {
+  try {
+    await context.db.insert(myTable).values({ id: __id, chain: context.chain.name, ... });
+    __inserted = true;
+  } catch {
+    __suffix++;
+    __id = `${__baseId}-${__suffix}`;
+  }
+}
+```
+
+### Multi-chain, one indexer
+
+All networks in the Networks panel are indexed concurrently inside a single Ponder process
+stored in the same database. The `chain` column separates data from different networks.
+
+### startBlock auto-detection
+
+When a contract instance has `startBlock == 0` and a real (non-zero) address, `ponder_config.py`
+calls `get_contract_deployment_block(slug, addr)` from `abi/etherscan.py` to auto-detect the
+deployment block. Requires `ETHERSCAN_API_KEY` in the environment; silently skips if absent.
+
+Mock target for tests: `"subgraph_wizard.abi.etherscan.get_contract_deployment_block"`
+(lazy import — patch at source, not at the `ponder_config` namespace).
+
+### Ponder settings (`ponder_settings` in visual-config.json)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `database` | `"pglite"` \| `"postgres"` | `"pglite"` | Database backend. `postgres` emits a `database: { kind: "postgres", connectionString: process.env.DATABASE_URL }` block. |
+| `dbUrl` | `string` | `""` | Informational only — runtime reads `DATABASE_URL` from env. |
+| `ordering` | `"multichain"` \| `"omnichain"` \| `"experimental_isolated"` | `"multichain"` | Ponder event ordering mode. Default (`multichain`) is omitted from config. |
+
+### Per-contract Ponder options (stored on Contract node data)
+
+| Field | Description |
+|---|---|
+| `endBlock` | Optional stop block. Written to `ponder.config.ts` when non-empty. |
+| `includeCallTraces` | Emit `includeCallTraces: true` in contract config. |
+| `includeTransactionReceipts` | Emit `includeTransactionReceipts: true` in contract config. |
+| `hasSetupHandler` | Generate a `ponder.on("ContractName:setup", ...)` handler stub. Adds a `setup` trigger port on the node. |
+
+### Per-network advanced options (stored on network entries)
+
+| Field | Description |
+|---|---|
+| `pollingInterval` | RPC polling interval (ms). Written to chain config. |
+| `maxBlockRange` | Max block range for `eth_getLogs`. Written to chain config. |
 
 ---
 
@@ -122,9 +261,11 @@ After the ABI is loaded, ports appear automatically.
 | `event-{Name}` | trigger (amber) | Fires once per occurrence of this event |
 | `event-{Name}-{param}` | varies | Individual parameter value — revealed by clicking the ▶ chevron |
 
-**Note on address vs deployed address:**
-- `implicit-address` = `event.address` (runtime — the contract that emitted the event)
-- `implicit-instance-address` = the hardcoded address from the Instances config (static)
+**Ponder Options (collapsible section on node):**
+- `endBlock` input
+- `includeTransactionReceipts` checkbox
+- `includeCallTraces` checkbox
+- `hasSetupHandler` checkbox — adds `event-setup` trigger port
 
 ---
 
@@ -132,45 +273,45 @@ After the ABI is loaded, ports appear automatically.
 
 A GraphQL entity. Creates **one new record per event** occurrence (append-only history).
 
+In Ponder mode: becomes an `onchainTable` with an auto-added `chain` column.
+
 **Ports:**
 
 | Port | Side | Description |
 |---|---|---|
 | `evt` | in | Wire from a Contract event port — triggers a save |
-| `field-{name}` | in | Value to store in this field. If unwired, the compiler uses the event parameter of the same name automatically. |
+| `field-{name}` | in | Value to store in this field. If unwired, auto-fills from matching event parameter name. |
 
 **Field types:** `ID`, `String`, `Bytes`, `Boolean`, `Int`, `BigInt`, `BigDecimal`, `Address`,
 or any other Entity/Aggregate Entity name (entity reference / foreign key).
 
 **ID strategy options:** `tx.hash`, `tx.hash + log index`, `event.address`, `Custom` (wire to `field-id`).
 
-**`@derivedFrom` support:** Mark an entity-reference field as a virtual reverse relation by clicking
-the link icon and entering the field name in the child entity. No input port is shown; no
-AssemblyScript is emitted for it — The Graph resolves it at query time.
+**`@derivedFrom` support (The Graph only):** Mark an entity-reference field as a virtual
+reverse relation. No input port shown; no code emitted — The Graph resolves at query time.
 
 ---
 
 ### Aggregate Entity — `aggregateEntity`
 
-A **singleton record** updated in-place on each event. Use for running totals, cumulative balances,
-or latest-state tracking.
+A **singleton record** updated in-place on each event. Use for running totals, cumulative
+balances, or latest-state tracking.
 
 **Trigger mechanism — checklist, not a wire:**
-The node has a **Trigger Events** checklist in its header. Tick the checkbox next to each event
-(from any contract on the canvas) that should fire this handler. No `evt` wire is used.
-Multiple events from multiple contracts can all trigger the same aggregate node.
+The node has a **Trigger Events** checklist in its header. Tick the checkbox next to each
+event that should fire this handler. No `evt` wire is used.
 
 **Ports:**
 
 | Port | Side | Description |
 |---|---|---|
-| `field-id` | in | Stable lookup key for this record (e.g. a contract address). Wire a fixed value. |
-| `field-in-{name}` | in | New value to write into the field — usually a Math node result. |
-| `field-out-id` | out | Exposes the stable ID as an output wire — use as a foreign key in a related history Entity. |
-| `field-prev-{name}` | out | The value stored in the field BEFORE this update — feed into Math nodes to accumulate. |
+| `field-id` | in | Stable lookup key for this record (e.g. a contract address). |
+| `field-in-{name}` | in | New value to write into the field — usually a Math node result. Only rendered when field has a non-empty name. |
+| `field-out-id` | out | Exposes the stable ID as an output wire — use as a foreign key in a related Entity. |
+| `field-prev-{name}` | out | Value stored before this update — feed into Math nodes to accumulate. Only rendered when field has a non-empty name. |
 
-**Pattern for running totals:**
-`field-prev-balance` → Math(add) left; event param → Math(add) right; Math result → `field-in-balance`.
+**Important:** Port handle IDs are derived only from `field.name` — never a numeric fallback.
+Fields without a name render no handle. This prevents stale wire handles after renaming.
 
 ---
 
@@ -186,7 +327,7 @@ Binary arithmetic on two `BigInt` or `BigDecimal` values.
 
 ### TypeCast — `typecast`
 
-Converts a value from one Graph type to another. 7 cast modes (stored as `castIndex` 0–6):
+Converts a value from one type to another. 7 cast modes (stored as `castIndex` 0–6):
 
 `BigInt → Int`, `BigInt → String`, `Bytes → String`, `Bytes → Address`,
 `String → Bytes`, `Address → String`, `Address → Bytes`.
@@ -218,11 +359,10 @@ Calls a view/pure function on a contract during an event handler to fetch extra 
 **Setup:** Select the target Contract from a dropdown, then select the function. Ports are
 generated from the ABI.
 
-**Address binding:** The node **automatically uses the instance address** configured for the
-selected contract in the Networks panel. No bind-address wire is needed for cross-contract reads.
+**Address binding:** Automatically uses the instance address configured for the selected
+contract in the Networks panel. No bind-address wire needed for cross-contract reads.
 
-**Optional override:** Wire a dynamic `Address` value into the `address` input port to override
-the auto-bound instance address.
+**Optional override:** Wire a dynamic `Address` value into the `address` input port.
 
 **Ports:**
 
@@ -231,87 +371,6 @@ the auto-bound instance address.
 | `address` | in | Optional override address — uses the configured instance address if unwired. |
 | `in-{paramName}` | in | Argument for the function call. One port per ABI parameter. |
 | `out-{returnName}` | out | Return value from the call. One port per ABI return value. |
-
----
-
-## Key Design Decisions
-
-### `address` ABI type → `Address` Graph type
-Solidity `address` parameters now map to the `Address` Graph type (not `Bytes`).
-This affects port types on Contract nodes and the type-checking logic in the validator and compiler.
-
-### Contract Read auto-bind to instance address
-`ContractReadNode` reads the selected contract's instance address from the Networks config
-and binds it automatically. Users no longer need to wire `implicit-instance-address` into
-a bind-address port for cross-contract calls. The optional `address` input port still exists
-for dynamic address override scenarios.
-
-### `implicit-instance-address` port on Contract
-A dedicated output port (`implicit-instance-address`) on the Contract node exposes the
-hardcoded deployed address from the Instances config as a wire-able value. This is distinct
-from `implicit-address` (`event.address`, which is the runtime firing address).
-
-### Aggregate Entity trigger events checklist
-Aggregate Entity nodes no longer use an `evt` wire. Instead, each node has a
-**Trigger Events** checklist in its UI. Checking an event from any contract on the canvas
-connects that event handler to the aggregate. The compiler reads the `triggerEvents` list
-on the node data to generate the correct handlers.
-
-### `field-out-id` port on Aggregate Entity
-The `id` field on an Aggregate Entity has a right-side output port (`field-out-id`) that
-exposes the stable key as a wire-able output. This lets you link a history Entity's foreign-key
-field to the aggregate's ID without repeating the key computation.
-
-### `@derivedFrom` support on Entity fields
-Entity fields with an entity-reference type can be marked as `@derivedFrom` by clicking
-the link icon and entering the referencing field name. These fields are virtual — no input
-port is shown and no AssemblyScript is emitted for them. The Graph resolves them at query time.
-
-### BFS-based node hiding on contract collapse
-
-When a Contract node is collapsed (click its header), the canvas hides **all** downstream nodes
-reachable from that contract via a BFS traversal of the edge graph — not just entity nodes.
-This includes Math, TypeCast, ContractRead, Entity, AggregateEntity, and any other node type
-wired downstream of the collapsed contract.
-
-A node is only hidden if it is **exclusively** reachable via collapsed contracts. If a node is
-also reachable from an expanded contract (shared-node case), it remains visible. The set of
-hidden node IDs is computed in `App.jsx` using `useMemo` every time nodes or edges change.
-
-Expanding a contract restores all hidden nodes and edges automatically.
-
----
-
-### Entity field type dropdown stale-closure bug fix
-The field type dropdown in EntityNode previously suffered from a stale closure where the
-handler captured an outdated copy of the fields array, causing earlier fields to be overwritten
-when a later field's type was changed. This was fixed by using a functional state updater
-(`setFields(prev => ...)`) so each update always operates on the latest state.
-
-### Auto-fill strict type checking (`graph_compiler.py`)
-When an entity field has no explicit wire, the compiler auto-fills it from the event parameter
-with the same name. Previously, type mismatches were silently skipped (producing null fields in
-the deployed subgraph). Now, any type mismatch raises a `ValueError` immediately — the generate
-step fails with a diagnostic message before writing any files.
-
-Compatibility exceptions (handled by `_types_compatible()`):
-- Exact type match → compatible
-- `Address` param → `Bytes` field → compatible (`Address extends Bytes` in AssemblyScript)
-All other cross-type combinations are hard errors.
-
-### Indexed reference-type parameters → `Bytes` (`abi/utils.py`)
-When `extract_events` processes an ABI event parameter that is both `indexed: true` and a
-reference type (array, `bytes`, `string`, `tuple`), it emits `graph_type: "Bytes"` rather than
-expanding the element type. This matches graph-cli's behaviour: indexed reference types are
-keccak256-hashed before being stored in log topics, so only the hash (32 bytes) is available
-at indexing time. The `_is_reference_type()` helper identifies these types.
-
-### Networks panel → compiler address lookup
-The compiler (`graph_compiler.py`) builds `_network_address_by_type` from
-`visual_config["networks"]` at initialisation. When resolving `implicit-instance-address`,
-it falls back to this dict if the Contract node's inline address field is empty. This ensures
-contracts configured via the Networks panel get the correct address without requiring users to
-also fill in the inline field.
 
 ---
 
@@ -325,11 +384,13 @@ also fill in the inline field.
 | `GET` | `/api/config` | Load `visual-config.json` (scaffold if missing) |
 | `POST` | `/api/config` | Save `visual-config.json`; returns `{saved, path}` |
 | `POST` | `/api/validate` | Validate graph; returns `{issues, has_errors}` |
-| `POST` | `/api/generate` | Compile + write output files; returns `{files, dir}` |
-| `GET`  | `/api/fs/browse` | List subdirectories at `?path=<path>` (defaults to home); returns `{path, parent, dirs}` |
-| `POST` | `/api/fs/mkdir` | Create a directory; body `{path}`; returns `{path}` or 400/422 on error |
+| `POST` | `/api/generate` | Compile + write output files; returns `{files, dir}` — respects `output_mode` field |
+| `GET`  | `/api/fs/browse` | List subdirectories at `?path=<path>` (defaults to home) |
+| `POST` | `/api/fs/mkdir` | Create a directory; body `{path}` |
 
-All endpoints accept `?dir=<path>` to override the working directory.
+The `POST /api/generate` body includes `output_mode: "graph" | "ponder"`. When `"ponder"`,
+the server calls `ponder_config.py`, `ponder_schema.py`, and `ponder_compiler.py` instead of
+the Graph pipeline.
 
 ---
 
@@ -347,29 +408,29 @@ All endpoints accept `?dir=<path>` to override the working directory.
 - `MATH_DISCONNECTED_INPUT`, `STRCONCAT_DISCONNECTED`
 - `CONDITIONAL_NO_CONDITION`
 - `TYPECAST_BAD_INDEX`
+- `WIRE_UNKNOWN_PORT` (wire targets a port that no longer exists — stale after canvas edits)
 
 ---
 
-## Solidity → Graph Type Mapping (`abi/utils.py`)
+## Solidity → Graph / Ponder Type Mapping (`abi/utils.py`)
 
-| Solidity | Graph type | Notes |
+| Solidity | Graph type | Ponder type |
 |---|---|---|
-| `uint8`–`uint32` | `Int` | |
-| `uint64`+ | `BigInt` | |
-| `address` | `Address` | |
-| `bool` | `Boolean` | |
-| `string` | `String` | |
-| `bytes`, `bytesN` | `Bytes` | |
-| `int8`–`int32` | `Int` | |
-| `int64`+ | `BigInt` | |
-| `T[]`, `T[N]` (non-indexed) | `[GraphType!]` | Expanded to list notation |
-| `T[]`, `T[N]` (indexed) | `Bytes` | Only the keccak256 hash is stored in the log topic — actual values are not recoverable |
-| `bytes`, `string`, `tuple` (indexed) | `Bytes` | Same reason — reference types are hashed when indexed |
+| `uint8`–`uint32` | `Int` | `t.integer()` |
+| `uint64`+ | `BigInt` | `t.bigint()` |
+| `address` | `Address` | `t.hex()` |
+| `bool` | `Boolean` | `t.boolean()` |
+| `string` | `String` | `t.text()` |
+| `bytes`, `bytesN` | `Bytes` | `t.hex()` |
+| `int8`–`int32` | `Int` | `t.integer()` |
+| `int64`+ | `BigInt` | `t.bigint()` |
+| `T[]`, `T[N]` (non-indexed) | `[GraphType!]` | `t.text()` (JSON) |
+| `T[]`, `T[N]` (indexed) | `Bytes` | `t.hex()` |
+| `BigDecimal` | `BigDecimal` | `t.text()` (stored as string) |
 
-**Indexed reference-type rule:** When a parameter has `"indexed": true` in the ABI AND its
-Solidity type is a reference type (any array, `bytes`, `string`, or `tuple`), the parser
-emits `graph_type: "Bytes"` regardless of the element type. This matches what graph-cli
-generates and prevents TS2322 AssemblyScript build errors.
+**Indexed reference-type rule:** When a parameter has `"indexed": true` AND its Solidity
+type is a reference type (any array, `bytes`, `string`, or `tuple`), the parser emits
+`graph_type: "Bytes"` — only the keccak256 hash is stored in the log topic.
 
 ---
 
@@ -378,15 +439,28 @@ generates and prevents TS2322 AssemblyScript build errors.
 ```json
 {
   "schema_version": 1,
-  "subgraph_name": "my-subgraph",
+  "subgraph_name": "my-project",
+  "output_mode": "ponder",
+  "ponder_settings": {
+    "database": "pglite",
+    "dbUrl": "",
+    "ordering": "multichain"
+  },
   "networks": [
     {
       "network": "mainnet",
       "contracts": {
         "ERC20": {
           "instances": [
-            { "label": "USDC", "address": "0x...", "startBlock": 6082465 }
-          ]
+            {
+              "label": "USDC",
+              "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+              "startBlock": 6082465,
+              "endBlock": ""
+            }
+          ],
+          "pollingInterval": null,
+          "maxBlockRange": null
         }
       }
     }
@@ -398,36 +472,72 @@ generates and prevents TS2322 AssemblyScript build errors.
 
 ---
 
-## Generated Output Structure
+## Key Design Decisions
 
-**Visual editor mode:**
-```
-<output-dir>/
-├── visual-config.json         ← saved graph state
-├── subgraph.yaml
-├── schema.graphql
-├── networks.json              ← per-chain addresses
-├── package.json               ← npm scripts: codegen / build / deploy
-├── howto.md                   ← step-by-step deployment guide to The Graph Studio
-└── src/mappings/
-    └── {ContractType}.ts      ← compiled AssemblyScript
-```
+### `address` ABI type → `Address` Graph type
+Solidity `address` parameters map to the `Address` Graph type (not `Bytes`).
+
+### Contract Read auto-bind to instance address
+`ContractReadNode` reads the selected contract's instance address from the Networks config
+and binds it automatically. The optional `address` input port still exists for dynamic
+address override scenarios.
+
+### `implicit-instance-address` port on Contract
+A dedicated output port exposing the hardcoded deployed address as a wire-able value.
+Distinct from `implicit-address` (`event.address`, the runtime firing address).
+
+### Aggregate Entity trigger events checklist
+Aggregate Entity nodes no longer use an `evt` wire. Each node has a **Trigger Events**
+checklist in its UI. The compiler reads the `triggerEvents` list on node data to generate
+the correct handlers.
+
+### Aggregate Entity port handles — no numeric fallback
+Handle IDs (`field-in-{name}`, `field-prev-{name}`) are only rendered when `field.name` is
+non-empty. Using a numeric-index fallback (`field.name || idx`) caused stale wire handles
+after fields were renamed. The fix ensures users must name a field before wiring it.
+
+### `field-out-id` port on Aggregate Entity
+Exposes the stable key as a wire-able output for linking history Entity foreign-key fields.
+
+### `@derivedFrom` support on Entity fields (The Graph only)
+Entity fields with entity-reference types can be marked as `@derivedFrom` via the link icon.
+No input port shown; no code emitted. The Graph resolves them at query time.
+
+### BFS-based node hiding on contract collapse
+When a Contract node is collapsed, the canvas hides **all** downstream nodes reachable from
+that contract via BFS — not just entity nodes. Nodes reachable from an expanded contract
+remain visible.
+
+### Auto-fill strict type checking (`graph_compiler.py`)
+When an entity field has no explicit wire, the compiler auto-fills from the matching event
+parameter. Type mismatches raise a `ValueError` immediately before writing any files.
+
+### Indexed reference-type parameters → `Bytes` (`abi/utils.py`)
+Indexed reference types (arrays, `bytes`, `string`, `tuple`) emit `graph_type: "Bytes"`.
+Matches graph-cli's behaviour: only the keccak256 hash is stored in log topics.
 
 ---
 
 ## Testing
 
-**776 tests passing** (as of 2026-04-30).
+**1119+ tests passing.**
 
 ```bash
 pytest              # all tests
 pytest -v
-pytest tests/test_validator.py   # validator only
-pytest tests/test_server.py      # server/API only
+pytest tests/test_ponder_config.py   # Ponder config + boilerplate + API index + startBlock
+pytest tests/test_ponder_compiler.py # Ponder handler compiler
+pytest tests/test_ponder_schema.py   # Ponder schema generator
+pytest tests/test_full_generation_ponder.py  # End-to-end Ponder generation
+pytest tests/test_validator.py       # Visual graph validator
+pytest tests/test_server.py          # FastAPI endpoints
 ```
 
 Notable test files:
-- `test_validator.py` — covers all node types, type mismatch, aggregate trigger checklist, issue structure
+- `test_ponder_config.py` — `render_ponder_config`, `render_ponder_api_index`,
+  `TestAutoChainColumn`, `TestStartBlockEtherscanIntegration`
+- `test_ponder_compiler.py` — `TestAutoChainField`, suffix-retry, setup handlers
+- `test_validator.py` — all node types, type mismatch, aggregate trigger checklist
 - `test_server.py` — health, ABI parse/fetch, config CRUD, validate, generate endpoints
 
 ---
@@ -453,12 +563,14 @@ cd frontend && npm run build
 
 | Variable | Purpose |
 |---|---|
-| `ETHERSCAN_API_KEY` | Etherscan API key (ethereum) |
+| `ETHERSCAN_API_KEY` | Etherscan API key (ethereum mainnet) — also used for startBlock auto-detection |
 | `OPTIMISM_ETHERSCAN_API_KEY` | Optimism explorer API key |
 | `ARBITRUM_ETHERSCAN_API_KEY` | Arbiscan API key |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` (default `INFO`) |
 | `DEBUG` | `1` / `true` to show full tracebacks |
 | `VITE_API_PORT` | Override FastAPI port during frontend dev (default `8000`) |
+| `PONDER_RPC_URL_{chainId}` | RPC endpoint for Ponder (set in `.env.local` in the generated project) |
+| `DATABASE_URL` | PostgreSQL connection string (Ponder production mode) |
 
 ---
 
@@ -470,49 +582,67 @@ cd frontend && npm run build
 
 ---
 
-### GenerateModal.jsx — directory picker
+## GenerateModal.jsx — directory picker + Ponder settings
 
-The **Generate** button no longer immediately generates files. Instead it opens a modal
-(`frontend/src/components/GenerateModal.jsx`) with two modes:
+The **Generate** button opens a modal (`frontend/src/components/GenerateModal.jsx`) with:
 
 - **Type path** (default): free-form monospace text input. Press `Enter` or click Generate.
-  Press `Escape` or click the backdrop to cancel.
-- **Browse…**: server-backed filesystem navigator powered by `GET /api/fs/browse`.
-  Click folders to descend, use the ↑ chevron to go up, click the folder-plus icon to create
-  a new subdirectory (`POST /api/fs/mkdir`) and navigate into it. The text input goes read-only
-  showing the current browsed path. Click **Type path** to return to manual entry.
+- **Browse…**: server-backed filesystem navigator (`GET /api/fs/browse`, `POST /api/fs/mkdir`).
+- **Ponder Settings** section (shown only in Ponder mode):
+  - Database: radio `PGlite` / `PostgreSQL`; PostgreSQL shows a connection string input.
+  - Ordering: select `multichain` / `omnichain` / `experimental_isolated`.
 
-The modal stores the last-used directory in `genDir` state in `App.jsx` and passes it as
-`initialDir` on next open. The Generate button is disabled (and styled accordingly) until a
-non-empty directory is selected. All `<button>` elements inside the modal carry `type="button"`
-to prevent accidental form submission if the modal is ever wrapped in a form.
+`ponderSettings` state lives in `App.jsx` and is persisted in `visual-config.json` as
+`ponder_settings`. It is passed into `buildPayload()` so the server receives it on generate.
 
 ---
 
-## Recent Changes (2026-04-29)
+## Recent Changes (2026-05-01)
 
-- **Aggregate Entity redesigned:** trigger events are now configured via a checklist in the
-  node UI, not via an `evt` wire. The compiler reads `triggerEvents` from node data.
-- **`field-out-id` port added** on Aggregate Entity: exposes the stable ID as a wire-able output
-  for use as a foreign key in related history entities.
-- **Contract Read auto-bind:** ContractReadNode now automatically binds to the selected
-  contract's configured instance address. The `bind-address` wire is no longer needed for
-  cross-contract reads. An optional `address` override port remains for dynamic address scenarios.
-- **`implicit-instance-address` port added** on Contract nodes: exposes the hardcoded deployed
-  address as a wire-able output (distinct from `implicit-address` / `event.address`).
-- **`address` → `Address` ABI type mapping:** Solidity `address` parameters now map to the
-  `Address` Graph type instead of `Bytes`.
-- **`@derivedFrom` support:** Entity fields with entity-reference types can be marked as virtual
-  reverse relations via the link icon; no input port or AssemblyScript is generated for them.
-- **Entity field type dropdown stale-closure bug fixed:** functional state updater pattern
-  prevents earlier fields from being overwritten when a later field's type is changed.
-- **Generate button now opens a directory-picker modal** (`GenerateModal.jsx`): two modes —
-  free-form "Type path" input and a server-backed "Browse…" filesystem navigator.
-  New API endpoints: `GET /api/fs/browse` (list dirs) and `POST /api/fs/mkdir` (create dir).
-- **Generated output now includes `package.json`** (npm scripts for codegen/build/deploy) and
-  **`howto.md`** (step-by-step deployment guide to The Graph Studio).
-- **BFS-based node hiding on collapse:** collapsing a Contract node now hides ALL downstream
-  nodes (Math, TypeCast, ContractRead, Entity, AggregateEntity, etc.) reachable only via that
-  contract — not just entity nodes wired via `evt`. Shared nodes (reachable from an expanded
-  contract) remain visible.
-- **Test count: 147 passing.**
+### Ponder output mode (major feature)
+
+Complete Ponder indexer generation from the visual canvas:
+
+- **`ponder_config.py`** — `render_ponder_config` (createConfig with chains + contracts),
+  `render_ponder_api_index` (Hono app mounting /graphql — required since Ponder 0.8),
+  `render_ponder_howto` (tailored PONDER_HOWTO.md), and all boilerplate renderers.
+- **`ponder_schema.py`** — converts entity/aggregate nodes to `onchainTable` definitions;
+  auto-injects `chain: t.text().notNull()` after `id` in every table.
+- **`ponder_compiler.py`** — emits `ponder.on(...)` handlers; sets `chain: context.chain.name`
+  on every insert; suffix-retry loop for duplicate IDs; setup handler stubs.
+- **`server.py`** — `VisualConfig` Pydantic model updated; `_generate_ponder` function routes
+  to all three Ponder generators; `output_mode` field added to generate payload.
+- **Frontend** — output mode toggle in toolbar; `ponderSettings` state in App.jsx; Ponder
+  Settings section in GenerateModal; endBlock + advanced options in NetworksPanel; Ponder
+  Options section + setup handler port on ContractNode.
+
+### Etherscan startBlock auto-detection (Ponder)
+
+`ponder_config.py` calls `get_contract_deployment_block(slug, addr)` when `startBlock == 0`
+and a real address is present. 7 integration tests in `test_ponder_config.py` cover this path.
+Patch target for tests: `"subgraph_wizard.abi.etherscan.get_contract_deployment_block"`.
+
+### Auto `chain` field (Ponder)
+
+- `ponder_schema.py`: `chain: t.text().notNull()` after `id` in every `onchainTable`.
+- `ponder_compiler.py`: `chain: context.chain.name` in every insert + aggregate upsert.
+- `context.chain.name` (not `context.network.name` — renamed in Ponder 0.8).
+
+### /graphql endpoint fix (Ponder 0.8)
+
+`render_ponder_api_index` generates `src/api/index.ts` that explicitly mounts
+`graphql({ db, schema })` at `/graphql` and `/`. Without this, the endpoint returns 404
+(breaking change in Ponder 0.8).
+
+### Aggregate Entity port handle fix
+
+`AggregateEntityNode.jsx` no longer uses numeric index as fallback for handle IDs.
+Fields without a name render no port handle, preventing stale wire handles in the visual config.
+
+### Documentation update
+
+- `README.md`: Ponder output mode section, files table, behaviour callouts.
+- `docs/user-guide.md`: Ponder quick-start section.
+- `docs/config-format.md`: `ponder_settings`, per-contract and per-network Ponder options.
+- `docs/architecture.md`: updated layout; section 4.5a Ponder Generation Pipeline.
+- `HelpPanel.jsx`: output mode toggle docs; separate file tables for both modes.
