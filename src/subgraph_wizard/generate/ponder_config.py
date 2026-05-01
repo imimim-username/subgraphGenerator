@@ -381,19 +381,25 @@ def render_ponder_env_dts() -> str:
 
 
 def render_ponder_tsconfig() -> str:
-    """Return a tsconfig.json suitable for a Ponder project."""
+    """Return a tsconfig.json matching the official Ponder project template."""
     config = {
         "compilerOptions": {
-            "target": "ES2022",
-            "module": "ES2022",
-            "moduleResolution": "bundler",
             "strict": True,
-            "paths": {
-                "ponder:registry": ["./ponder-env.d.ts"],
-                "ponder:schema": ["./ponder-env.d.ts"],
-            },
+            "noUncheckedIndexedAccess": True,
+            "verbatimModuleSyntax": False,
+            "esModuleInterop": True,
+            "isolatedModules": True,
+            "allowSyntheticDefaultImports": True,
+            "resolveJsonModule": True,
+            "moduleResolution": "bundler",
+            "module": "ESNext",
+            "noEmit": True,
+            "lib": ["ES2022"],
+            "target": "ES2022",
+            "skipLibCheck": True,
         },
-        "include": ["src/**/*.ts", "ponder.config.ts", "ponder.schema.ts"],
+        "include": ["./**/*.ts"],
+        "exclude": ["node_modules"],
     }
     return json.dumps(config, indent=2) + "\n"
 
@@ -412,15 +418,17 @@ def render_ponder_package_json(project_name: str) -> str:
         "name": slug,
         "version": "0.0.1",
         "private": True,
+        "type": "module",
+        "engines": {"node": ">=18.14"},
         "scripts": {
-            "dev":   "ponder dev",
-            "start": "ponder start",
+            "dev":     "ponder dev",
+            "start":   "ponder start",
             "codegen": "ponder codegen",
         },
         "dependencies": {
-            "hono":       "latest",
-            "ponder":     "latest",
-            "viem":       "latest",
+            "hono":   "latest",
+            "ponder": "latest",
+            "viem":   "latest",
         },
         "devDependencies": {
             "drizzle-kit": "latest",
@@ -669,7 +677,10 @@ pnpm --version   # 8.x.x or later
 
 ---
 
-## Step 3 — Install dependencies
+## Step 3 — Install Ponder and dependencies
+
+This installs Ponder itself (as a project dependency) along with all other
+required packages.
 
 ```bash
 cd "{output_dir}"
