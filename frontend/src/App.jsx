@@ -599,35 +599,67 @@ export default function App() {
     }
   }, [buildPayload]);
 
-  // ── Clean up stale Ponder ABI files ──────────────────────────────────────
-  const cleanupPonder = useCallback(async () => {
-    if (outputMode !== 'ponder') return;
-    if (!genDir) {
-      setCleanupStatus({ error: 'Set the output directory first (use Generate)' });
-      setTimeout(() => setCleanupStatus(null), 5000);
+  // ── Clean up orphan canvas nodes ─────────────────────────────────────────
+  // Removes any non-contract node (entity, aggregate, transform, contractread)
+  // that has no connection — directly or indirectly — to any contract node.
+  // Strategy: bidirectional BFS from every contract node across all edges,
+  // then delete anything that was never reached.
+  const cleanupCanvas = useCallback(() => {
+    const contractIds = new Set(
+      nodes.filter((n) => n.type === 'contract').map((n) => n.id)
+    );
+
+    if (contractIds.size === 0) {
+      // No contracts on canvas — nothing meaningful to clean up.
+      setCleanupStatus({ removed: 0 });
+      setTimeout(() => setCleanupStatus(null), 4000);
       return;
     }
-    setCleanupStatus('cleaning');
-    try {
-      const res = await fetch(`/api/cleanup-ponder?dir=${encodeURIComponent(genDir)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCleanupStatus({ removed: data.removed ?? [], kept: data.kept ?? [] });
-        setTimeout(() => setCleanupStatus(null), 6000);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setCleanupStatus({ error: data.detail ?? 'Cleanup failed' });
-        setTimeout(() => setCleanupStatus(null), 5000);
-      }
-    } catch (err) {
-      setCleanupStatus({ error: String(err) });
-      setTimeout(() => setCleanupStatus(null), 5000);
+
+    // Build adjacency lists in both directions so we catch nodes that feed
+    // data INTO a contract chain as well as nodes that receive data FROM it.
+    const fwd = new Map(); // source → [target, ...]
+    const bwd = new Map(); // target → [source, ...]
+    for (const edge of edges) {
+      if (!fwd.has(edge.source)) fwd.set(edge.source, []);
+      fwd.get(edge.source).push(edge.target);
+      if (!bwd.has(edge.target)) bwd.set(edge.target, []);
+      bwd.get(edge.target).push(edge.source);
     }
-  }, [buildPayload, genDir, outputMode]);
+
+    // BFS — visit neighbours in both directions from contract nodes.
+    const visited = new Set(contractIds);
+    const queue = [...contractIds];
+    while (queue.length) {
+      const curr = queue.shift();
+      for (const nbr of [...(fwd.get(curr) ?? []), ...(bwd.get(curr) ?? [])]) {
+        if (!visited.has(nbr)) {
+          visited.add(nbr);
+          queue.push(nbr);
+        }
+      }
+    }
+
+    // Non-contract nodes not reachable from/to any contract are orphans.
+    const orphanIds = new Set(
+      nodes
+        .filter((n) => n.type !== 'contract' && !visited.has(n.id))
+        .map((n) => n.id)
+    );
+
+    if (orphanIds.size === 0) {
+      setCleanupStatus({ removed: 0 });
+      setTimeout(() => setCleanupStatus(null), 4000);
+      return;
+    }
+
+    setNodes((prev) => prev.filter((n) => !orphanIds.has(n.id)));
+    setEdges((prev) =>
+      prev.filter((e) => !orphanIds.has(e.source) && !orphanIds.has(e.target))
+    );
+    setCleanupStatus({ removed: orphanIds.size });
+    setTimeout(() => setCleanupStatus(null), 5000);
+  }, [nodes, edges, setNodes, setEdges]);
 
   // ── Validation ────────────────────────────────────────────────────────────
   const { issues, hasErrors, issuesByNodeId, issuesByEdgeId, isValidating } =
@@ -861,10 +893,8 @@ export default function App() {
             onAddConditional={addConditionalNode}
             onAddContractRead={addContractReadNode}
             onAutoLayout={applyLayout}
-            onCleanup={cleanupPonder}
+            onCleanup={cleanupCanvas}
             cleanupStatus={cleanupStatus}
-            outputMode={outputMode}
-            genDir={genDir}
           />
         </Panel>
 

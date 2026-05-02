@@ -70,19 +70,15 @@ export default function Toolbar({
   onAutoLayout,
   onCleanup,
   cleanupStatus,
-  outputMode,
-  genDir,
 }) {
   // Derive cleanup button label + color from status
-  const isCleaning = cleanupStatus === 'cleaning';
-  const cleanupOk  = cleanupStatus && cleanupStatus.removed !== undefined;
+  const cleanupOk  = cleanupStatus && typeof cleanupStatus.removed === 'number';
   const cleanupErr = cleanupStatus?.error;
 
   let cleanupLabel = 'Clean Up';
-  if (isCleaning)  cleanupLabel = 'Cleaning…';
-  else if (cleanupOk) {
-    const n = cleanupStatus.removed.length;
-    cleanupLabel = n === 0 ? '✓ Nothing to clean' : `✓ Removed ${n} file${n > 1 ? 's' : ''}`;
+  if (cleanupOk) {
+    const n = cleanupStatus.removed;
+    cleanupLabel = n === 0 ? '✓ Nothing to clean' : `✓ Removed ${n} node${n > 1 ? 's' : ''}`;
   } else if (cleanupErr) cleanupLabel = `✗ ${cleanupStatus.error}`;
 
   const cleanupColor = cleanupErr
@@ -90,8 +86,6 @@ export default function Toolbar({
     : cleanupOk
       ? '#4ade80'
       : '#94a3b8';
-
-  const showCleanup = outputMode === 'ponder';
 
   return (
     <div
@@ -187,30 +181,23 @@ export default function Toolbar({
         Auto Layout
       </div>
 
-      {showCleanup && (
-        <div
-          onClick={!isCleaning ? onCleanup : undefined}
-          style={{
-            ...BTN_BASE,
-            cursor: isCleaning ? 'default' : 'pointer',
-            opacity: isCleaning ? 0.6 : 1,
-            color: cleanupColor,
-            borderColor: cleanupErr
-              ? 'rgba(239,68,68,0.4)'
-              : cleanupOk
-                ? 'rgba(74,222,128,0.3)'
-                : 'var(--border)',
-          }}
-          title={
-            !genDir
-              ? 'Run Generate first to set the output directory'
-              : 'Remove stale generated files (deleted contracts, orphan schemas)'
-          }
-        >
-          <Trash2 size={12} style={{ color: cleanupColor, flexShrink: 0 }} />
-          {cleanupLabel}
-        </div>
-      )}
+      <div
+        onClick={onCleanup}
+        style={{
+          ...BTN_BASE,
+          cursor: 'pointer',
+          color: cleanupColor,
+          borderColor: cleanupErr
+            ? 'rgba(239,68,68,0.4)'
+            : cleanupOk
+              ? 'rgba(74,222,128,0.3)'
+              : 'var(--border)',
+        }}
+        title="Remove orphan nodes — entities, transforms, and reads that are not connected to any contract"
+      >
+        <Trash2 size={12} style={{ color: cleanupColor, flexShrink: 0 }} />
+        {cleanupLabel}
+      </div>
     </div>
   );
 }
