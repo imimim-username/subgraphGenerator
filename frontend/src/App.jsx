@@ -94,6 +94,7 @@ export default function App() {
   const [genStatus, setGenStatus] = useState(null);   // null | 'generating' | { files: [...] } | { error: string }
   const [genModalOpen, setGenModalOpen] = useState(false);
   const [genDir, setGenDir] = useState('');           // user-chosen output directory
+  const [cleanupStatus, setCleanupStatus] = useState(null); // null | 'cleaning' | { removed, kept } | { error }
   const [outputMode, setOutputMode] = useState('graph'); // 'graph' | 'ponder'
   const [ponderSettings, setPonderSettings] = useState({ // persisted Ponder config
     database: 'pglite', dbUrl: '', ordering: 'multichain',
@@ -598,6 +599,36 @@ export default function App() {
     }
   }, [buildPayload]);
 
+  // ── Clean up stale Ponder ABI files ──────────────────────────────────────
+  const cleanupPonder = useCallback(async () => {
+    if (outputMode !== 'ponder') return;
+    if (!genDir) {
+      setCleanupStatus({ error: 'Set the output directory first (use Generate)' });
+      setTimeout(() => setCleanupStatus(null), 5000);
+      return;
+    }
+    setCleanupStatus('cleaning');
+    try {
+      const res = await fetch(`/api/cleanup-ponder?dir=${encodeURIComponent(genDir)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload()),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCleanupStatus({ removed: data.removed ?? [], kept: data.kept ?? [] });
+        setTimeout(() => setCleanupStatus(null), 6000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setCleanupStatus({ error: data.detail ?? 'Cleanup failed' });
+        setTimeout(() => setCleanupStatus(null), 5000);
+      }
+    } catch (err) {
+      setCleanupStatus({ error: String(err) });
+      setTimeout(() => setCleanupStatus(null), 5000);
+    }
+  }, [buildPayload, genDir, outputMode]);
+
   // ── Validation ────────────────────────────────────────────────────────────
   const { issues, hasErrors, issuesByNodeId, issuesByEdgeId, isValidating } =
     useValidation(nodes, edges, networks);
@@ -830,6 +861,10 @@ export default function App() {
             onAddConditional={addConditionalNode}
             onAddContractRead={addContractReadNode}
             onAutoLayout={applyLayout}
+            onCleanup={cleanupPonder}
+            cleanupStatus={cleanupStatus}
+            outputMode={outputMode}
+            genDir={genDir}
           />
         </Panel>
 

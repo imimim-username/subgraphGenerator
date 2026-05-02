@@ -3,7 +3,7 @@
  * Nodes can be added via click or by dragging onto the canvas.
  */
 
-import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen, Wand2 } from 'lucide-react';
+import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen, Wand2, Trash2 } from 'lucide-react';
 
 const BTN_BASE = {
   display: 'flex',
@@ -68,7 +68,31 @@ export default function Toolbar({
   onAddConditional,
   onAddContractRead,
   onAutoLayout,
+  onCleanup,
+  cleanupStatus,
+  outputMode,
+  genDir,
 }) {
+  // Derive cleanup button label + color from status
+  const isCleaning = cleanupStatus === 'cleaning';
+  const cleanupOk  = cleanupStatus && cleanupStatus.removed !== undefined;
+  const cleanupErr = cleanupStatus?.error;
+
+  let cleanupLabel = 'Clean Up';
+  if (isCleaning)  cleanupLabel = 'Cleaning…';
+  else if (cleanupOk) {
+    const n = cleanupStatus.removed.length;
+    cleanupLabel = n === 0 ? '✓ Nothing to clean' : `✓ Removed ${n} file${n > 1 ? 's' : ''}`;
+  } else if (cleanupErr) cleanupLabel = `✗ ${cleanupStatus.error}`;
+
+  const cleanupColor = cleanupErr
+    ? '#ef4444'
+    : cleanupOk
+      ? '#4ade80'
+      : '#94a3b8';
+
+  const showCleanup = outputMode === 'ponder';
+
   return (
     <div
       style={{
@@ -162,6 +186,31 @@ export default function Toolbar({
         <Wand2 size={12} style={{ color: '#94a3b8', flexShrink: 0 }} />
         Auto Layout
       </div>
+
+      {showCleanup && (
+        <div
+          onClick={!isCleaning ? onCleanup : undefined}
+          style={{
+            ...BTN_BASE,
+            cursor: isCleaning ? 'default' : 'pointer',
+            opacity: isCleaning ? 0.6 : 1,
+            color: cleanupColor,
+            borderColor: cleanupErr
+              ? 'rgba(239,68,68,0.4)'
+              : cleanupOk
+                ? 'rgba(74,222,128,0.3)'
+                : 'var(--border)',
+          }}
+          title={
+            !genDir
+              ? 'Run Generate first to set the output directory'
+              : 'Remove stale generated files (deleted contracts, orphan schemas)'
+          }
+        >
+          <Trash2 size={12} style={{ color: cleanupColor, flexShrink: 0 }} />
+          {cleanupLabel}
+        </div>
+      )}
     </div>
   );
 }

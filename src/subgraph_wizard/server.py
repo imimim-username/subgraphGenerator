@@ -657,6 +657,108 @@ async def generate(
     return JSONResponse({"files": written, "dir": str(output_dir)})
 
 
+@app.post("/api/cleanup-ponder")
+async def cleanup_ponder(
+    config: VisualConfig,
+    dir: str | None = Query(default=None),
+) -> JSONResponse:
+    """Remove stale and orphan generated artifacts from a Ponder output directory.
+
+    Cleans up:
+
+    1. **Stale ABI files** — ``abis/*.ts`` files whose contract is no longer on
+       the canvas.  The same cleanup runs automatically on ``POST /api/generate``
+       (Ponder mode); this endpoint exposes it as a manual trigger.
+
+    2. **Orphan generated files** — the core generated files
+       (``ponder.config.ts``, ``ponder.schema.ts``, ``src/index.ts``,
+       ``src/api/index.ts``, ``ponder-env.d.ts``) are deleted so that stale
+       entity table definitions and handler blocks from deleted contracts / entities
+       are removed.  These files are fully regenerated on the next Generate click.
+
+    Body: VisualConfig (current canvas state — used to determine which ABIs
+          are still valid)
+    Query params:
+      dir — directory to clean (must point to the Ponder project root;
+            defaults to cwd)
+
+    Returns:
+      {"removed": [...], "kept": [...], "dir": "<dir>"}
+    """
+    if not dir:
+        raise HTTPException(
+            status_code=400,
+            detail="dir query parameter is required for cleanup",
+        )
+
+    output_dir = Path(dir).expanduser().resolve()
+    abis_dir = output_dir / "abis"
+
+    if not output_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Directory not found: {output_dir}",
+        )
+
+    removed: list[str] = []
+    kept: list[str] = []
+
+    # ── 1. Stale ABI files ────────────────────────────────────────────────────
+    # Determine which ABI file names correspond to current canvas contracts.
+    current_abi_filenames: set[str] = set()
+    for node in (config.model_dump().get("nodes") or []):
+        if node.get("type") != "contract":
+            continue
+        ct_name = (node.get("data") or {}).get("name", "").strip()
+        abi_data = (node.get("data") or {}).get("abi")
+        if ct_name and abi_data:
+            current_abi_filenames.add(f"{ct_name}Abi.ts")
+
+    if abis_dir.is_dir():
+        for abi_file in sorted(abis_dir.glob("*.ts")):
+            if abi_file.name not in current_abi_filenames:
+                try:
+                    abi_file.unlink()
+                    removed.append(str(abi_file.relative_to(output_dir)))
+                    logger.info("cleanup-ponder: removed stale ABI %s", abi_file)
+                except OSError as exc:
+                    logger.warning(
+                        "cleanup-ponder: could not remove %s: %s", abi_file, exc
+                    )
+            else:
+                kept.append(str(abi_file.relative_to(output_dir)))
+
+    # ── 2. Orphan generated files (schema, config, handlers) ─────────────────
+    # These monolithic files may contain table definitions and handler blocks
+    # for entities / contracts that no longer exist on the canvas.  Deleting
+    # them forces a clean regeneration on the next Generate click.  We do NOT
+    # delete user-customisable files (package.json, tsconfig.json, .env.*).
+    GENERATED_FILES = [
+        Path("ponder.config.ts"),
+        Path("ponder.schema.ts"),
+        Path("ponder-env.d.ts"),
+        Path("src") / "index.ts",
+        Path("src") / "api" / "index.ts",
+    ]
+    for rel_path in GENERATED_FILES:
+        target = output_dir / rel_path
+        if target.exists():
+            try:
+                target.unlink()
+                removed.append(str(rel_path))
+                logger.info("cleanup-ponder: removed generated file %s", target)
+            except OSError as exc:
+                logger.warning(
+                    "cleanup-ponder: could not remove %s: %s", target, exc
+                )
+
+    return JSONResponse({
+        "removed": removed,
+        "kept": kept,
+        "dir": str(output_dir),
+    })
+
+
 async def _generate_graph(
     config_dict: dict[str, Any],
     subgraph_name: str,
