@@ -695,7 +695,43 @@ class PonderCompiler:
                     addr = self._network_address_by_type.get(ct_name, "")
                 addr = addr or "0x0000000000000000000000000000000000000000"
                 return (f'"{addr}" as `0x${{string}}`', [], set())
-            return (f"/* contract read: {source_handle} */", [], set())
+            # ── Direct read-{fn} port wired as a value source ────────────────
+            if source_handle.startswith("read-"):
+                fn_name = source_handle[len("read-"):]
+                ct_name = data.get("name", contract_type)
+                read_fns = data.get("readFunctions", [])
+                fn = next((f for f in read_fns if f.get("name") == fn_name), None)
+                if not fn:
+                    return (f"/* unknown read fn: {fn_name} */", [], set())
+
+                # Resolve bind address (no event in setup context)
+                addr = data.get("address", "").strip()
+                if not addr:
+                    instances = data.get("instances", [])
+                    addr = instances[0].get("address", "") if instances else ""
+                if not addr:
+                    addr = self._network_address_by_type.get(ct_name, "")
+                bind_expr = (
+                    f'"{addr}" as `0x${{string}}`'
+                    if addr
+                    else "event.log.address"
+                )
+
+                stmts: list[str] = []
+                abi_names: set[str] = {ct_name}
+                var = _var_name(source_node_id, source_handle)
+                if var not in declared_vars:
+                    stmts.append(f"const {var} = await context.client.readContract({{")
+                    stmts.append(f"  abi: {ct_name}Abi,")
+                    stmts.append(f"  address: {bind_expr},")
+                    stmts.append(f'  functionName: "{fn_name}",')
+                    if getattr(self, "_compiling_event_name", "") != "setup":
+                        stmts.append(f"  blockNumber: event.block.number,")
+                    stmts.append(f"}});")
+                    declared_vars.add(var)
+                return (var, stmts, abi_names)
+
+            return (f"/* unhandled contract port: {source_handle} */", [], set())
 
         # ── Math node ──────────────────────────────────────────────────────────
         if node_type == "math":
