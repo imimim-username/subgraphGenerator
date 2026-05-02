@@ -36,6 +36,10 @@ export function getKnownHandles(node) {
           outputs.add(`event-${ev.name}-${p.name}`);
         }
       }
+      // setup handler adds a virtual event-setup port
+      if (data.hasSetupHandler) {
+        outputs.add('event-setup');
+      }
       for (const fn of data.readFunctions ?? []) {
         outputs.add(`read-${fn.name}`);
       }

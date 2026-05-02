@@ -439,7 +439,11 @@ export default function EntityNode({ id, data, selected }) {
               <Zap size={10} /> Trigger Events
             </span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginRight: 4 }}>
-              {triggerEvents.length > 0 ? `${triggerEvents.length} selected` : 'none'}
+              {sourceEvent === 'setup'
+                ? 'setup (wired)'
+                : triggerEvents.length > 0
+                  ? `${triggerEvents.length} selected`
+                  : 'none'}
             </span>
             {showTriggers ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
           </div>

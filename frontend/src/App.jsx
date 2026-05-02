@@ -377,24 +377,29 @@ export default function App() {
         const isEntityTarget = targetNode?.type === 'entity' || targetNode?.type === 'aggregateentity';
         if (sourceNode?.type === 'contract' && isEntityTarget) {
           const eventName = params.sourceHandle?.replace(/^event-/, '');
-          const event = sourceNode.data.events?.find((e) => e.name === eventName);
-          if (event) {
-            const existingFields = targetNode.data.fields ?? [];
-            const hasCustomFields = existingFields.some((f) => !f.required && f.name.trim());
-            if (!hasCustomFields) {
-              const newFields = [
-                { name: 'id', type: 'ID', required: true },
-                ...event.params.map((p) => ({ name: p.name, type: p.graph_type, required: false })),
-              ];
-              updateNodeData(targetNode.id, {
-                fields: newFields,
-                sourceEvent: eventName,
-                // Suggest entity name from event name if not already set
-                name: targetNode.data.name.trim() || eventName,
-              });
-            } else {
-              // Fields already set — just record the source event
-              updateNodeData(targetNode.id, { sourceEvent: eventName });
+          if (eventName === 'setup') {
+            // setup is a virtual event with no params — just record it as the source
+            updateNodeData(targetNode.id, { sourceEvent: 'setup' });
+          } else {
+            const event = sourceNode.data.events?.find((e) => e.name === eventName);
+            if (event) {
+              const existingFields = targetNode.data.fields ?? [];
+              const hasCustomFields = existingFields.some((f) => !f.required && f.name.trim());
+              if (!hasCustomFields) {
+                const newFields = [
+                  { name: 'id', type: 'ID', required: true },
+                  ...event.params.map((p) => ({ name: p.name, type: p.graph_type, required: false })),
+                ];
+                updateNodeData(targetNode.id, {
+                  fields: newFields,
+                  sourceEvent: eventName,
+                  // Suggest entity name from event name if not already set
+                  name: targetNode.data.name.trim() || eventName,
+                });
+              } else {
+                // Fields already set — just record the source event
+                updateNodeData(targetNode.id, { sourceEvent: eventName });
+              }
             }
           }
         }
