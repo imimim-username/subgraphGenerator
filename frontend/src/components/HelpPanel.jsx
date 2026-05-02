@@ -23,6 +23,9 @@ import {
   FolderPlus,
   ChevronDown,
   ChevronRight,
+  Wand2,
+  Trash2,
+  Settings,
 } from 'lucide-react';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -374,6 +377,45 @@ function ContractSection() {
         💡 <strong>Read functions</strong> (view/pure) listed on the node show which on-chain calls
         are available, but you call them using a separate <strong>Contract Read</strong> node — not
         by wiring directly from the contract. See the Contract Read section for details.
+      </div>
+
+      <div style={s.h4}>Ponder Options (Ponder mode only)</div>
+      <p style={s.p}>
+        Click <strong>Ponder Options</strong> at the bottom of the Contract node to expand a
+        section of Ponder-specific settings. These are ignored when generating a The Graph subgraph.
+      </p>
+      <table style={s.portTable}>
+        <tbody>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, width: 180, fontFamily: 'ui-monospace, monospace' }}>End Block</td>
+            <td style={s.td}>Stop indexing this contract's events at this block number. Leave blank to index to the chain tip.</td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>includeTransactionReceipts</td>
+            <td style={s.td}>Fetch the full transaction receipt for every event. Gives access to gas used, logs, and status. Adds RPC overhead.</td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>includeCallTraces</td>
+            <td style={s.td}>Record every call to this contract (not just events). Enables call trace handlers in <code style={s.inlineCode}>src/index.ts</code>. Requires an RPC with <code style={s.inlineCode}>debug_traceBlock</code> support.</td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>setup handler</td>
+            <td style={s.td}>
+              When checked, a <code style={s.inlineCode}>ponder.on("{'{'}ContractName{'}'}:setup", ...)</code> handler is emitted.
+              This fires once per network instance before event indexing starts — useful for seeding
+              initial state (e.g. reading on-chain values at deploy time). A <strong>setup</strong>{' '}
+              trigger port appears in the Events section; wire it to an Entity node to seed records.
+              Setup handlers are wrapped in try/catch: if a <code style={s.inlineCode}>readContract</code> call fails
+              (e.g. function not implemented on that chain), a warning is logged and indexing continues.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div style={s.tip}>
+        💡 <strong>Direct read wiring (shorthand):</strong> You can also wire a read function output
+        port (e.g. <code style={s.inlineCode}>read-name</code>) directly from the Contract node to an entity
+        field, without going through a Contract Read node. This works for zero-argument view functions
+        and is handy in setup handlers.
       </div>
 
       <div style={s.h4}>Collapsing a Contract node</div>
@@ -997,6 +1039,46 @@ function GenerateSection() {
         chain name so you can filter results by network in your GraphQL queries.
       </div>
 
+      <div style={s.h4}>Ponder Settings (inside the Generate modal)</div>
+      <p style={s.p}>
+        When Output Mode is set to <strong>Ponder</strong>, the Generate modal shows a{' '}
+        <strong>Ponder Settings</strong> section above the action buttons.
+      </p>
+      <table style={s.portTable}>
+        <tbody>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, width: 80 }}>Database</td>
+            <td style={s.td}>
+              <strong>PGlite</strong> (default) — embedded, zero-config SQLite-compatible database.
+              Perfect for local dev with <code style={s.inlineCode}>pnpm dev</code>. No setup needed.{' '}
+              <br />
+              <strong>PostgreSQL</strong> — external database for production. Emits a{' '}
+              <code style={s.inlineCode}>database: {'{ kind: "postgres" }'}</code> block in{' '}
+              <code style={s.inlineCode}>ponder.config.ts</code> and adds <code style={s.inlineCode}>DATABASE_URL</code> and{' '}
+              <code style={s.inlineCode}>DATABASE_SCHEMA</code> to <code style={s.inlineCode}>.env.example</code>.
+            </td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700 }}>Ordering</td>
+            <td style={s.td}>
+              <strong>multichain</strong> (default) — each chain's events are ordered independently.
+              Best performance for multi-chain deployments.{' '}
+              <br />
+              <strong>omnichain</strong> — strict global ordering across all chains by block timestamp.
+              Slower but consistent if your handlers read cross-chain state.{' '}
+              <br />
+              <strong>experimental_isolated</strong> — each chain gets its own database schema.
+              Experimental; check the Ponder docs before using.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div style={s.tip}>
+        💡 <strong>Stale files.</strong> Regenerating automatically removes any{' '}
+        <code style={s.inlineCode}>abis/*.ts</code> files from contracts that were deleted from
+        the canvas, so the generated project never imports a dangling ABI.
+      </div>
+
       <div style={s.warn}>
         ⚠️ The Generate button is <strong>disabled</strong> while validation errors (red outlines)
         exist. Fix all errors before generating. Warnings (amber) are advisory and do not block
@@ -1024,9 +1106,29 @@ function NetworksSection() {
       <div style={s.h4}>Fields per instance</div>
       <table style={s.portTable}>
         <tbody>
-          <tr><td style={{ ...s.td, fontWeight: 700, width: 100 }}>Label</td><td style={s.td}>A short name to distinguish instances of the same contract type (e.g. "pool-A", "pool-B"). Can be left blank if there's only one.</td></tr>
+          <tr><td style={{ ...s.td, fontWeight: 700, width: 110 }}>Label</td><td style={s.td}>A short name to distinguish instances of the same contract type (e.g. "pool-A", "pool-B"). Can be left blank if there's only one.</td></tr>
           <tr><td style={{ ...s.td, fontWeight: 700 }}>Address</td><td style={s.td}>The deployed contract address on this network, starting with <code style={s.inlineCode}>0x</code>.</td></tr>
           <tr><td style={{ ...s.td, fontWeight: 700 }}>Start Block</td><td style={s.td}>The block number where this contract was deployed. Indexing begins here — don't leave it at 0 or sync will take forever.</td></tr>
+          <tr><td style={{ ...s.td, fontWeight: 700 }}>End Block</td><td style={s.td}><em>(Ponder only)</em> Stop indexing events from this instance at this block. Leave blank to index to the chain tip.</td></tr>
+          <tr><td style={{ ...s.td, fontWeight: 700 }}>Detect ⚡</td><td style={s.td}>Auto-fills Start Block by querying Etherscan (or the RPC as fallback) for the contract's deployment block. Requires the address to be filled in first.</td></tr>
+        </tbody>
+      </table>
+
+      <div style={s.h4}>Advanced per-chain settings (Ponder mode only)</div>
+      <p style={s.p}>
+        Click <strong>Advanced</strong> below any network's contract table to reveal chain-level
+        Ponder tuning options.
+      </p>
+      <table style={s.portTable}>
+        <tbody>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, width: 160, fontFamily: 'ui-monospace, monospace' }}>pollingInterval (ms)</td>
+            <td style={s.td}>How often Ponder polls the RPC for new blocks. Default is 1000 ms. Increase for rate-limited endpoints.</td>
+          </tr>
+          <tr>
+            <td style={{ ...s.td, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>ethGetLogsBlockRange</td>
+            <td style={s.td}>Maximum block range per <code style={s.inlineCode}>eth_getLogs</code> request. Lower this if your RPC enforces a block-range limit (e.g. Alchemy free tier caps at 2000).</td>
+          </tr>
         </tbody>
       </table>
 
@@ -1216,6 +1318,43 @@ type 'Array<BigInt> | null'
         millions of irrelevant blocks.
       </p>
 
+      <div style={s.h4}>Ponder: setup handler crashes with ContractFunctionZeroDataError</div>
+      <p style={s.p}>
+        Example log line from <code style={s.inlineCode}>pnpm start</code>:
+      </p>
+      <pre style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#fca5a5', background: '#1e1e2e', padding: 8, borderRadius: 6, marginBottom: 8, whiteSpace: 'pre-wrap' }}>
+{`WARN  Failed 'context.client' action action=readContract
+        event=alchemistV3:setup chain=optimism retry_count=0
+ContractFunctionExecutionError: The contract function "debtToken"
+        returned no data ("0x").`}
+      </pre>
+      <p style={s.p}>
+        This happens when a setup handler calls <code style={s.inlineCode}>readContract</code> for a
+        function that doesn't exist at that contract address on a particular chain. For example, an
+        identical-name contract on Optimism might have a different ABI than the mainnet version.
+      </p>
+      <p style={s.p}>
+        <strong>Generated code behaviour:</strong> Setup handlers produced by this tool are
+        automatically wrapped in <code style={s.inlineCode}>try {'{'} ... {'}'} catch (err) {'{'} console.warn(...) {'}'}</code>.
+        A failed read logs a warning and lets indexing continue on all other chains and events.
+        You will see a <code style={s.inlineCode}>WARN [...:setup] handler failed on chain …</code>{' '}
+        message in the logs — this is expected and safe.
+      </p>
+      <p style={s.p}>
+        If you need the read to <em>succeed</em> on every chain, verify that every contract
+        instance in the Networks panel points to an address that actually implements the function,
+        or guard the call manually in <code style={s.inlineCode}>src/index.ts</code>.
+      </p>
+
+      <div style={s.h4}>Ponder: old ABI file imported after deleting a contract</div>
+      <p style={s.p}>
+        If you delete a Contract node from the canvas and regenerate, the old{' '}
+        <code style={s.inlineCode}>abis/OldContractAbi.ts</code> is automatically deleted and its import
+        removed from <code style={s.inlineCode}>ponder.config.ts</code>. If you see a{' '}
+        <code style={s.inlineCode}>Failed to load url ./abis/…</code> error, you are running a project
+        generated by an older version — regenerate to fix it.
+      </p>
+
     </Collapsible>
   );
 }
@@ -1316,6 +1455,44 @@ function ScenariosSection() {
   );
 }
 
+function CanvasToolsSection() {
+  return (
+    <Collapsible title="Canvas Tools" color="#94a3b8" icon={Settings} badge="Toolbar">
+      <p style={s.p}>
+        The left-hand toolbar provides tools for managing the canvas itself, beyond adding nodes.
+      </p>
+
+      <div style={s.h4}><Wand2 size={12} style={{ verticalAlign: 'middle', marginRight: 4, color: '#94a3b8' }} />Auto Layout</div>
+      <p style={s.p}>
+        Arranges all visible nodes in a left-to-right DAG layout using the Dagre algorithm.
+        Contracts appear on the left, transforms in the middle, and entities on the right.
+        Useful after building a complex graph to remove overlaps and make the wiring readable.
+      </p>
+      <div style={s.tip}>
+        💡 Auto Layout only repositions nodes — it doesn't change any wiring or settings.
+        You can always undo the layout by pressing <code style={s.inlineCode}>Ctrl+Z</code>.
+      </div>
+
+      <div style={s.h4}><Trash2 size={12} style={{ verticalAlign: 'middle', marginRight: 4, color: '#94a3b8' }} />Clean Up</div>
+      <p style={s.p}>
+        Removes all <strong>orphan nodes</strong> — entities, transforms (Math, TypeCast, etc.),
+        and Contract Read nodes that are not connected (directly or transitively) to any Contract
+        node. Orphans accumulate when you delete a contract but leave its downstream nodes behind,
+        or when you wire experiments that you later abandon.
+      </p>
+      <p style={s.p}>
+        After clicking, the button briefly shows how many nodes were removed (or "Nothing to clean"
+        if the canvas was already tidy). Contract nodes are never deleted by Clean Up — only
+        non-contract nodes that have no path to any contract.
+      </p>
+      <div style={s.warn}>
+        ⚠️ Clean Up is <strong>not undoable</strong> in the current version. If you delete nodes
+        by accident, use your browser's back button or reload a saved canvas from the Library.
+      </div>
+    </Collapsible>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
@@ -1328,7 +1505,10 @@ const SECTIONS = [
   { key: 'strconcat',  label: 'Str Concat',        icon: TextCursorInput },
   { key: 'conditional',label: 'Conditional',       icon: GitBranch },
   { key: 'cread',      label: 'Contract Read',     icon: BookOpen },
+  { key: 'networks',   label: 'Networks',          icon: Globe },
   { key: 'generate',   label: 'Generate',          icon: FolderPlus },
+  { key: 'canvastools',label: 'Canvas Tools',      icon: Settings },
+  { key: 'library',    label: 'Library',           icon: FolderOpen },
   { key: 'wiring',          label: 'Wiring',          icon: GitBranch },
   { key: 'troubleshooting', label: 'Troubleshoot',    icon: GitBranch },
   { key: 'scenarios',       label: 'Scenarios',       icon: Zap },
@@ -1385,7 +1565,10 @@ export default function HelpPanel({ isOpen, onClose }) {
           <div id="help-section-strconcat"><StrConcatSection /></div>
           <div id="help-section-conditional"><ConditionalSection /></div>
           <div id="help-section-cread"><ContractReadSection /></div>
+          <div id="help-section-networks"><NetworksSection /></div>
           <div id="help-section-generate"><GenerateSection /></div>
+          <div id="help-section-canvastools"><CanvasToolsSection /></div>
+          <div id="help-section-library"><LibrarySection /></div>
           <div id="help-section-wiring"><WiringSection /></div>
           <div id="help-section-troubleshooting"><TroubleshootingSection /></div>
           <div id="help-section-scenarios"><ScenariosSection /></div>

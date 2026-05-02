@@ -61,6 +61,15 @@ automatically — one amber trigger port per event, plus implicit ports for the 
 | `implicit-block-timestamp` | Unix timestamp |
 | `event-{Name}` | Amber trigger port — wire to an Entity `evt` port |
 | `event-{Name}-{param}` | Individual event parameter — click the ▶ chevron to reveal |
+| `event-setup` | **(Ponder only)** Setup trigger port — appears when **setup handler** is enabled in Ponder Options |
+
+**Ponder Options** (expandable section at the bottom of a Contract node):
+
+| Option | Description |
+|---|---|
+| `includeTransactionReceipts` | Attach full transaction receipt to every event handler (`event.transaction.receipt`) |
+| `includeCallTraces` | Enable call-trace ingestion for this contract (`ponder.on("ContractName:functionName()", ...)`) |
+| **setup handler** | Emit a `ponder.on("ContractName:setup", ...)` handler that runs once per chain at startup. Exposes an `event-setup` port — wire Entity nodes to it to initialise records on startup. The generated handler wraps all logic in `try/catch` so a failed `readContract` on one chain does not crash the entire indexer. |
 
 ### Entity
 Creates one new record per event occurrence — good for transaction history. Wire a Contract
@@ -124,8 +133,26 @@ optional `address` override input port.
 ## Networks panel
 
 Open with the **Networks** button. Add one entry per deployment target (e.g. mainnet, Arbitrum).
-For each network, set the deployed address and start block for every Contract node. You can
-add multiple **instances** of the same contract type (useful for factory patterns).
+For each network, set the deployed address, start block, and optionally end block for every
+Contract node. You can add multiple **instances** of the same contract type (useful for factory
+patterns). Click **Detect** next to a start block field to auto-populate it from the contract's
+deployment transaction.
+
+**Instance columns:**
+
+| Column | Description |
+|---|---|
+| Label | Human-readable name for this deployment instance |
+| Address | Deployed contract address |
+| Start block | Block at which indexing starts (inclusive) |
+| End block | **(Ponder only)** Stop indexing at this block |
+
+**Advanced per-chain settings** (expandable "Advanced" section per network):
+
+| Setting | Description |
+|---|---|
+| `pollingInterval` (ms) | How often Ponder polls the RPC for new blocks (default: 1 000 ms) |
+| `ethGetLogsBlockRange` | Maximum block range per `eth_getLogs` batch (default: chain-dependent) |
 
 `networks.json` is written alongside the other output files so you can deploy to each network
 by name with `graph deploy`.
@@ -192,8 +219,35 @@ Click **Generate** in the toolbar to open the directory-picker modal. The modal 
   `/` so both the API and the GraphiQL playground are accessible.
 - **Database.** Defaults to PGlite (zero-config, embedded). Switch to PostgreSQL in the
   Generate modal (Ponder Settings section) or edit `ponder.config.ts` directly.
+- **Ordering.** Controls multi-chain event ordering strategy. Options: `omnichain` (default —
+  globally ordered), `multichain` (per-chain ordering, higher throughput), or
+  `experimental_isolated` (fully isolated chains). Set in the Generate modal.
+- **Setup handler resilience.** When a contract node has **setup handler** enabled, the
+  generated handler wraps all logic in `try { ... } catch (err) { console.warn(...) }`.
+  This prevents a failed `readContract` call on one chain (e.g. a function not implemented
+  at that chain's address) from crashing the entire Ponder indexer.
+- **Stale ABI cleanup.** Each Generate run auto-deletes `abis/*.ts` files for contracts that
+  no longer exist on the canvas, keeping the output directory in sync.
+
+#### Ponder Settings (Generate modal)
+
+| Setting | Options | Description |
+|---|---|---|
+| Database | **PGlite** (default) / PostgreSQL | PGlite is embedded and zero-config. PostgreSQL requires a connection string (stored in `DATABASE_URL`). |
+| Ordering | **omnichain** (default) / multichain / experimental_isolated | Controls how events from multiple chains are interleaved during indexing. |
 
 The Generate button is disabled while validation errors (red outlines) exist.
+
+---
+
+## Canvas tools
+
+Two utility buttons sit at the bottom of the Toolbar panel:
+
+| Button | Description |
+|---|---|
+| **Auto Layout** | Runs a Dagre left-to-right layout pass over all visible nodes. Useful after adding many nodes manually. |
+| **Clean Up** | Removes orphan nodes — Entity, Aggregate, Transform (Math / TypeCast / StrConcat / Conditional), and Contract Read nodes that are not connected (directly or transitively) to any Contract node. Reports the number of nodes removed. Cannot be undone; save to the Library first if needed. |
 
 ---
 
@@ -312,7 +366,7 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 ## Tests
 
 ```bash
-pytest          # 1119+ tests
+pytest          # 1160+ tests
 pytest -v
 pytest tests/test_validator.py
 pytest tests/test_ponder_config.py
