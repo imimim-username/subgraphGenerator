@@ -966,12 +966,31 @@ class PonderCompiler:
             abi_names.add(ref_contract_type)
 
             out_name = source_handle[4:] if source_handle.startswith("out-") else source_handle
-            result_var = _var_name(source_node_id, f"out_{out_name}")
-            if result_var not in declared_vars:
-                args_str = ", ".join(arg_exprs)
-                args_part = f"args: [{args_str}], " if arg_exprs else ""
+
+            # Detect whether this output is a tuple struct component.  When the
+            # read function returns a struct, viem returns a plain JS object; the
+            # compiler must emit ``result.fieldName`` rather than ``result``.
+            fn_outputs = fn.get("outputs", [])
+            out_entry = next(
+                (o for o in fn_outputs if o.get("name") == out_name), None
+            )
+            is_tuple_component = bool(
+                out_entry and out_entry.get("is_tuple_component")
+            )
+
+            # Tuple components share a single readContract call keyed by the
+            # node id (no out_name suffix).  Non-tuple outputs keep the current
+            # per-name key so existing canvases are unaffected.
+            call_var = (
+                _var_name(source_node_id, "out")
+                if is_tuple_component
+                else _var_name(source_node_id, f"out_{out_name}")
+            )
+            result_expr = f"{call_var}.{out_name}" if is_tuple_component else call_var
+
+            if call_var not in declared_vars:
                 stmts.append(
-                    f"const {result_var} = await context.client.readContract({{"
+                    f"const {call_var} = await context.client.readContract({{"
                 )
                 stmts.append(f"  abi: {ref_contract_type}Abi,")
                 stmts.append(f"  address: {bind_expr},")
@@ -983,9 +1002,9 @@ class PonderCompiler:
                 if getattr(self, "_compiling_event_name", "") != "setup":
                     stmts.append(f"  blockNumber: event.block.number,")
                 stmts.append(f"}});")
-                declared_vars.add(result_var)
+                declared_vars.add(call_var)
 
-            return (result_var, stmts, abi_names)
+            return (result_expr, stmts, abi_names)
 
         # ── Aggregate entity node — prev-value or id output ports ────────────
         if node_type == "aggregateentity":

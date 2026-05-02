@@ -145,6 +145,11 @@ def solidity_type_to_graph(solidity_type: str) -> str:
         if solidity_type == f"int{size}" or solidity_type == f"uint{size}":
             return "BigInt" if size > 32 else "Int"
     
+    # Tuple / struct — components are expanded by callers that have access to
+    # the full ABI entry; map the base "tuple" token to Bytes as a safe fallback.
+    if solidity_type == "tuple" or solidity_type.startswith("tuple["):
+        return "Bytes"
+
     # Default to Bytes for unknown types
     logger.warning(f"Unknown Solidity type '{solidity_type}', defaulting to Bytes")
     return "Bytes"
@@ -310,8 +315,44 @@ def extract_read_functions(abi: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 )
             return result
 
+        def _process_outputs(params: list[dict]) -> list[dict[str, Any]]:
+            """Like _process_params but expands tuple outputs into their components.
+
+            When a function returns a struct (tuple), viem's readContract returns
+            a plain object whose keys are the component names.  Expanding the
+            components into individual output entries lets the canvas expose one
+            port per field and lets the compiler generate ``result.fieldName``
+            accessors instead of an opaque Bytes value.
+            """
+            result = []
+            for i, p in enumerate(params):
+                name = p.get("name") or f"param{i}"
+                solidity_type = p.get("type", "")
+                components = p.get("components", [])
+                if solidity_type == "tuple" and components:
+                    for comp in components:
+                        comp_name = comp.get("name") or f"field{len(result)}"
+                        comp_type = comp.get("type", "")
+                        result.append(
+                            {
+                                "name": comp_name,
+                                "solidity_type": comp_type,
+                                "graph_type": solidity_type_to_graph(comp_type),
+                                "is_tuple_component": True,
+                            }
+                        )
+                else:
+                    result.append(
+                        {
+                            "name": name,
+                            "solidity_type": solidity_type,
+                            "graph_type": solidity_type_to_graph(solidity_type),
+                        }
+                    )
+            return result
+
         processed_inputs = _process_params(inputs)
-        processed_outputs = _process_params(outputs)
+        processed_outputs = _process_outputs(outputs)
 
         # Canonical signature uses raw Solidity types, no 'indexed' keyword
         input_types = ",".join(p.get("type", "") for p in inputs)
