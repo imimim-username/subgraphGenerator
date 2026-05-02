@@ -772,3 +772,91 @@ class TestDirectReadPort:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         # Should not crash and should emit some diagnostic comment
         assert "unknown read fn" in src or "ghost" in src
+
+
+# ── Implicit ports in setup handler context ───────────────────────────────────
+
+class TestImplicitPortsInSetup:
+    """Implicit ports (address, block-number, tx-hash, …) reference event.*
+    expressions that don't exist in a setup handler.  The compiler must replace
+    them with safe alternatives so the emitted TypeScript is valid."""
+
+    def _make_setup_config(self, implicit_handle, field_type="String", address="0xBEEF"):
+        fields = [
+            {"name": "id",  "type": "ID",       "required": True},
+            {"name": "val", "type": field_type},
+        ]
+        nodes = [
+            _contract("c1", "Token", hasSetupHandler=True, address=address),
+            _entity("e1", "Meta", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-setup",    "e1", "trigger"),
+            _edge("ed2", "c1", implicit_handle,  "e1", "field-val"),
+        ]
+        return _cfg(nodes=nodes, edges=edges)
+
+    def test_implicit_address_uses_configured_address_in_setup(self):
+        """implicit-address must resolve to the literal contract address,
+        not event.log.address, inside a setup handler."""
+        src = compile_ponder(
+            self._make_setup_config("implicit-address", field_type="Address", address="0xDEAD")
+        )["src/index.ts"]
+        assert "event.log.address" not in src
+        assert "0xDEAD" in src
+
+    def test_implicit_address_no_event_reference_in_setup(self):
+        """Ensure the word 'event' does not appear in the setup handler body
+        when only implicit-address is wired (it would crash at runtime)."""
+        src = compile_ponder(
+            self._make_setup_config("implicit-address", field_type="Address")
+        )["src/index.ts"]
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        # event.* references inside the setup block would cause ReferenceError
+        assert "event.log" not in setup_block
+        assert "event.block" not in setup_block
+        assert "event.transaction" not in setup_block
+
+    def test_implicit_instance_address_uses_configured_address_in_setup(self):
+        src = compile_ponder(
+            self._make_setup_config("implicit-instance-address", field_type="Address", address="0xCAFE")
+        )["src/index.ts"]
+        assert "event.log.address" not in src
+        assert "0xCAFE" in src
+
+    def test_implicit_address_in_regular_event_still_uses_event_log_address(self):
+        """Outside setup context the implicit-address port must still emit
+        event.log.address — the fix must not affect regular handlers."""
+        fields = [
+            {"name": "id",   "type": "ID",      "required": True},
+            {"name": "addr", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Tx", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer",   "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-address",  "e1", "field-addr"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src
+
+    def test_implicit_block_number_in_setup_emits_undefined_not_crash(self):
+        """block-number has no equivalent in setup — must not emit event.block.number."""
+        src = compile_ponder(
+            self._make_setup_config("implicit-block-number", field_type="BigInt")
+        )["src/index.ts"]
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        assert "event.block.number" not in setup_block
+
+    def test_implicit_tx_hash_in_setup_emits_undefined_not_crash(self):
+        """tx-hash has no equivalent in setup — must not emit event.transaction.hash."""
+        src = compile_ponder(
+            self._make_setup_config("implicit-tx-hash", field_type="String")
+        )["src/index.ts"]
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        assert "event.transaction.hash" not in setup_block

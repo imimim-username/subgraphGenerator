@@ -681,20 +681,29 @@ class PonderCompiler:
 
         # ── Contract node ──────────────────────────────────────────────────────
         if node_type == "contract":
+            is_setup = getattr(self, "_compiling_event_name", "") == "setup"
+
+            # In setup handlers there is no event object — implicit ports that
+            # normally reference event.log.address / event.block.number etc. must
+            # be replaced with safe compile-time values.
+            if is_setup and source_handle.startswith("implicit-"):
+                if source_handle in ("implicit-address", "implicit-instance-address"):
+                    # Use the contract's configured address instead of event.log.address
+                    addr = data.get("address", "").strip()
+                    if not addr:
+                        instances = data.get("instances", [])
+                        addr = instances[0].get("address", "") if instances else ""
+                    if not addr:
+                        ct_name = data.get("name", "")
+                        addr = self._network_address_by_type.get(ct_name, "")
+                    addr = addr or "0x0000000000000000000000000000000000000000"
+                    return (f'"{addr}" as `0x${{string}}`', [], set())
+                # block-number, block-timestamp, tx-hash have no equivalent in setup
+                return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
+
             if source_handle.startswith("event-") or source_handle.startswith("implicit-"):
                 expr = _event_param_expr_ts(source_handle)
                 return (expr, [], set())
-            # instance-address
-            if source_handle == "implicit-instance-address":
-                addr = data.get("address", "").strip()
-                if not addr:
-                    instances = data.get("instances", [])
-                    addr = instances[0].get("address", "") if instances else ""
-                if not addr:
-                    ct_name = data.get("name", "")
-                    addr = self._network_address_by_type.get(ct_name, "")
-                addr = addr or "0x0000000000000000000000000000000000000000"
-                return (f'"{addr}" as `0x${{string}}`', [], set())
             # ── Direct read-{fn} port wired as a value source ────────────────
             if source_handle.startswith("read-"):
                 fn_name = source_handle[len("read-"):]
