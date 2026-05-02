@@ -860,3 +860,125 @@ class TestImplicitPortsInSetup:
         setup_idx = src.index('ponder.on("Token:setup"')
         setup_block = src[setup_idx:]
         assert "event.transaction.hash" not in setup_block
+
+
+# ── Setup handler resilience (try/catch wrapping) ─────────────────────────────
+
+class TestSetupHandlerTryCatch:
+    """Setup handler bodies must be wrapped in try/catch so that a failed
+    readContract call (e.g. function not implemented at that address on a
+    specific chain) does not crash the entire indexer.
+
+    Root cause that prompted this: alchemistV3:setup called readContract for
+    debtToken() on Optimism, which returned 0x — Ponder retried 5× then the
+    handler threw, halting all indexing.
+    """
+
+    def _setup_with_contractread(self, address="0xfa995B6ABc387376C3e7De5f6d394Ab5B6beE26B"):
+        """Config that mimics the crashing scenario: a setup handler that calls
+        readContract inside (via a ContractRead node wired to an entity field)."""
+        read_fn = _read_fn("debtToken", inputs=[], outputs=[{"name": "", "type": "address"}])
+        fields = [
+            {"name": "id",        "type": "ID",     "required": True},
+            {"name": "debtToken", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "alchemistV3",
+                read_fns=[read_fn],
+                hasSetupHandler=True,
+                address=address,
+            ),
+            {"id": "cr1", "type": "contractread", "position": {},
+             "data": {"contractNodeId": "c1", "fnIndex": 0}},
+            _entity("e1", "AlchemistState", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1",  "event-setup",  "e1",  "trigger"),
+            _edge("ed2", "cr1", "out-result",   "e1",  "field-debtToken"),
+        ]
+        return _cfg(nodes=nodes, edges=edges)
+
+    def test_setup_handler_body_wrapped_in_try_catch(self):
+        """The setup handler body must be enclosed in a try { ... } catch block."""
+        src = compile_ponder(self._setup_with_contractread())["src/index.ts"]
+        setup_idx = src.index('ponder.on("alchemistV3:setup"')
+        setup_block = src[setup_idx:]
+        assert "try {" in setup_block
+        assert "} catch (err) {" in setup_block
+
+    def test_setup_handler_catch_logs_warning(self):
+        """The catch block must emit a console.warn so failed reads are visible
+        in logs instead of silently swallowed."""
+        src = compile_ponder(self._setup_with_contractread())["src/index.ts"]
+        setup_idx = src.index('ponder.on("alchemistV3:setup"')
+        setup_block = src[setup_idx:]
+        assert "console.warn" in setup_block
+
+    def test_setup_handler_catch_includes_contract_name(self):
+        """The warning message should identify which handler failed."""
+        src = compile_ponder(self._setup_with_contractread())["src/index.ts"]
+        setup_idx = src.index('ponder.on("alchemistV3:setup"')
+        setup_block = src[setup_idx:]
+        assert "alchemistV3:setup" in setup_block
+
+    def test_setup_handler_catch_includes_chain_name(self):
+        """The warning should include the chain name so the user knows which
+        network the read failed on."""
+        src = compile_ponder(self._setup_with_contractread())["src/index.ts"]
+        setup_idx = src.index('ponder.on("alchemistV3:setup"')
+        setup_block = src[setup_idx:]
+        assert "context.chain.name" in setup_block
+
+    def test_readcontract_inside_try_block(self):
+        """The readContract call must appear inside the try block (before the
+        catch), not after it — otherwise the try/catch does nothing useful."""
+        src = compile_ponder(self._setup_with_contractread())["src/index.ts"]
+        setup_idx = src.index('ponder.on("alchemistV3:setup"')
+        setup_block = src[setup_idx:]
+        try_idx   = setup_block.index("try {")
+        catch_idx = setup_block.index("} catch (err) {")
+        read_idx  = setup_block.index("readContract")
+        assert try_idx < read_idx < catch_idx, (
+            "readContract must appear between try { and } catch (err) {"
+        )
+
+    def test_regular_event_handler_not_wrapped_in_try_catch(self):
+        """Normal event handlers should NOT be wrapped — only setup handlers need
+        this resilience (regular handlers crashing is the expected behaviour)."""
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Xfer"),
+        ]
+        edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        transfer_idx = src.index('ponder.on("Token:Transfer"')
+        transfer_block = src[transfer_idx:]
+        # The inner try inside the suffix-retry loop is OK, but there must be
+        # no top-level try { ... } catch (err) { console.warn wrapper.
+        assert "console.warn" not in transfer_block
+
+    def test_setup_handler_with_no_entities_stub_no_try_catch_needed(self):
+        """Stub setup handler (no wired entities) doesn't need try/catch because
+        it contains no readContract calls that could fail."""
+        nodes = [_contract("c1", "Token", hasSetupHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        # The stub has a TODO comment — that's fine either way.
+        # Just verify the output is syntactically sane (no double try/catch).
+        assert src.count("} catch (err) {") == 0  # stub has no reads, no catch needed
+
+    def test_setup_handler_with_entity_only_wrapped_in_try_catch(self):
+        """Even a setup handler that just inserts an entity (no readContract)
+        should be wrapped so any future body changes remain resilient."""
+        nodes = [
+            _contract("c1", "Token", hasSetupHandler=True),
+            _entity("e1", "Global"),
+        ]
+        edges = [_edge("ed1", "c1", "event-setup", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        assert "try {" in setup_block
+        assert "} catch (err) {" in setup_block
+        assert "console.warn" in setup_block

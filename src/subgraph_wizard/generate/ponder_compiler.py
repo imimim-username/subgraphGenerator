@@ -302,10 +302,24 @@ class PonderCompiler:
             used_entity_names.update(e_names)
             used_abi_names.update(a_names)
 
-        body = textwrap.indent("\n".join(body_lines), "  ")
-
         # setup handlers receive only `context`; all others receive `event` too
         params = "{ context }" if event_name == "setup" else "{ event, context }"
+
+        if event_name == "setup":
+            # Wrap setup handler body in try/catch so a failed readContract on one
+            # chain (e.g. function not implemented at that address) does not crash
+            # the entire indexer — it just logs a warning and moves on.
+            inner = textwrap.indent("\n".join(body_lines), "    ")
+            body = (
+                f"  try {{\n"
+                f"{inner}\n"
+                f"  }} catch (err) {{\n"
+                f'    console.warn(`[{contract_type}:setup] handler failed on chain ${{context.chain.name}}:`, err);\n'
+                f"  }}"
+            )
+        else:
+            body = textwrap.indent("\n".join(body_lines), "  ")
+
         block = (
             f'ponder.on("{contract_type}:{event_name}", '
             f'async ({params}) => {{\n'
