@@ -581,6 +581,44 @@ class TestMultiAddressAndEnvExample:
         assert "startBlock: 100" in out
         assert "startBlock: 500" not in out
 
+    def test_multichain_multi_instance_address_arrays(self):
+        """Multi-chain contract with 2 instances per chain → per-chain address arrays."""
+        out = render_ponder_config(_cfg(
+            networks=[
+                _net("mainnet", {
+                    "Token": {"instances": [_inst("0xA1", 100), _inst("0xA2", 110)]},
+                }),
+                _net("optimism", {
+                    "Token": {"instances": [_inst("0xB1", 200), _inst("0xB2", 210)]},
+                }),
+            ]
+        ))
+        # Both chains' address arrays must be present
+        assert '["0xA1", "0xA2"]' in out
+        assert '["0xB1", "0xB2"]' in out
+        # Per-chain min startBlock
+        assert "startBlock: 100" in out
+        assert "startBlock: 200" in out
+        # The old "add manually" placeholder comment must NOT appear
+        assert "add manually" not in out
+
+    def test_multichain_multi_instance_min_startblock(self):
+        """Multi-chain multi-instance: per-chain min startBlock is used."""
+        out = render_ponder_config(_cfg(
+            networks=[
+                _net("mainnet", {
+                    "Token": {"instances": [_inst("0xA1", 500), _inst("0xA2", 100)]},
+                }),
+                _net("optimism", {
+                    "Token": {"instances": [_inst("0xB1", 999), _inst("0xB2", 300)]},
+                }),
+            ]
+        ))
+        assert "startBlock: 100" in out   # mainnet min
+        assert "startBlock: 300" in out   # optimism min
+        assert "startBlock: 500" not in out
+        assert "startBlock: 999" not in out
+
     def test_ws_var_in_env_example(self):
         from subgraph_wizard.generate.ponder_config import render_ponder_env_example
         net = {"network": "mainnet", "contracts": {}, "wsEnabled": True}

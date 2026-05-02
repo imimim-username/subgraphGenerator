@@ -406,31 +406,44 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
 
             # Per-chain sub-objects
             chain_obj_lines: list[str] = []
-            extra_instances = 0
             for chain_name in chains_used:
                 chain_instances = instances_by_chain[chain_name]
-                inst = chain_instances[0]
-                if len(chain_instances) > 1:
-                    extra_instances += len(chain_instances) - 1
 
-                per_chain: list[str] = [f"address: {_addr(inst)}"]
-                if inst["startBlock"]:
-                    per_chain.append(f"startBlock: {inst['startBlock']}")
-                if inst.get("endBlock"):
-                    per_chain.append(f"endBlock: {inst['endBlock']}")
+                # Multiple instances on the same chain → address array (same
+                # logic as the single-chain path above).
+                if len(chain_instances) == 1:
+                    addr_val = _addr(chain_instances[0])
+                else:
+                    addr_val = (
+                        "[" + ", ".join(_addr(i) for i in chain_instances) + "]"
+                    )
+
+                # Earliest startBlock across all instances for this chain.
+                all_starts = [i["startBlock"] for i in chain_instances]
+                start_block = (
+                    0 if any(s == 0 for s in all_starts) else min(all_starts)
+                )
+
+                # endBlock — only emit when all instances agree on the same value.
+                end_blocks = [
+                    i.get("endBlock") for i in chain_instances if i.get("endBlock")
+                ]
+                end_block: int | None = (
+                    end_blocks[0] if len(set(end_blocks)) == 1 else None
+                )
+
+                per_chain: list[str] = [f"address: {addr_val}"]
+                if start_block:
+                    per_chain.append(f"startBlock: {start_block}")
+                if end_block:
+                    per_chain.append(f"endBlock: {end_block}")
 
                 inner = "".join(f"\n          {f}," for f in per_chain)
                 chain_obj_lines.append(f"        {chain_name}: {{{inner}\n        }},")
 
-            extra_comment = ""
-            if extra_instances:
-                extra_comment = (
-                    f"  /* {extra_instances} additional instance(s) — add manually */"
-                )
-
             top_str = "".join(f"\n      {f}," for f in top_fields)
             chain_block = "\n".join(chain_obj_lines)
-            chain_obj = f"\n      chain: {{{extra_comment}\n{chain_block}\n      }},"
+            chain_obj = f"\n      chain: {{\n{chain_block}\n      }},"
             contract_lines.append(f"    {ct_name}: {{{top_str}{chain_obj}\n    }},")
 
     # ── Assemble file ─────────────────────────────────────────────────────────
