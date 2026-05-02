@@ -329,3 +329,93 @@ describe('computeBrokenHandleIssues', () => {
     expect(issues).toHaveLength(0);
   });
 });
+
+// ─── getKnownHandles — setup handler port ────────────────────────────────────
+
+describe('getKnownHandles — contract setup handler port', () => {
+  it('event-setup is absent when hasSetupHandler is false', () => {
+    const n = makeNode('contract', { events: [], readFunctions: [], hasSetupHandler: false });
+    const { outputs } = getKnownHandles(n);
+    expect(outputs.has('event-setup')).toBe(false);
+  });
+
+  it('event-setup is absent when hasSetupHandler is not set', () => {
+    const n = makeNode('contract', { events: [], readFunctions: [] });
+    const { outputs } = getKnownHandles(n);
+    expect(outputs.has('event-setup')).toBe(false);
+  });
+
+  it('event-setup is present when hasSetupHandler is true', () => {
+    const n = makeNode('contract', { events: [], readFunctions: [], hasSetupHandler: true });
+    const { outputs } = getKnownHandles(n);
+    expect(outputs.has('event-setup')).toBe(true);
+  });
+
+  it('event-setup coexists with regular event ports', () => {
+    const n = makeNode('contract', {
+      events: [{ name: 'Transfer', params: [{ name: 'value' }] }],
+      readFunctions: [],
+      hasSetupHandler: true,
+    });
+    const { outputs } = getKnownHandles(n);
+    expect(outputs.has('event-setup')).toBe(true);
+    expect(outputs.has('event-Transfer')).toBe(true);
+    expect(outputs.has('event-Transfer-value')).toBe(true);
+  });
+});
+
+// ─── computeBrokenHandleIssues — setup port wires ────────────────────────────
+
+describe('computeBrokenHandleIssues — setup port', () => {
+  it('does not flag event-setup wire when hasSetupHandler is true', () => {
+    const src = makeNode('contract', {
+      events: [],
+      readFunctions: [],
+      hasSetupHandler: true,
+    }, 'src');
+    const tgt = makeNode('entity', { fields: [{ name: 'id' }] }, 'tgt');
+    const edge = makeEdge('src', 'event-setup', 'tgt', 'evt');
+
+    const issues = computeBrokenHandleIssues([src, tgt], [edge]);
+    expect(issues).toHaveLength(0);
+  });
+
+  it('flags event-setup wire when hasSetupHandler is false', () => {
+    const src = makeNode('contract', {
+      events: [],
+      readFunctions: [],
+      hasSetupHandler: false,
+    }, 'src');
+    const tgt = makeNode('entity', { fields: [{ name: 'id' }] }, 'tgt');
+    const edge = makeEdge('src', 'event-setup', 'tgt', 'evt');
+
+    const issues = computeBrokenHandleIssues([src, tgt], [edge]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].code).toBe('BROKEN_HANDLE');
+  });
+
+  it('flags event-setup wire when hasSetupHandler is not set', () => {
+    const src = makeNode('contract', { events: [], readFunctions: [] }, 'src');
+    const tgt = makeNode('entity', { fields: [{ name: 'id' }] }, 'tgt');
+    const edge = makeEdge('src', 'event-setup', 'tgt', 'evt');
+
+    const issues = computeBrokenHandleIssues([src, tgt], [edge]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].code).toBe('BROKEN_HANDLE');
+  });
+
+  it('only the setup edge is valid when setup + bad event both wired', () => {
+    const src = makeNode('contract', {
+      events: [],
+      readFunctions: [],
+      hasSetupHandler: true,
+    }, 'src');
+    const tgt = makeNode('entity', { fields: [{ name: 'id' }] }, 'tgt');
+    const goodEdge = makeEdge('src', 'event-setup',    'tgt', 'evt',   'e-good');
+    const badEdge  = makeEdge('src', 'event-Transfer', 'tgt', 'evt',   'e-bad');
+
+    const issues = computeBrokenHandleIssues([src, tgt], [goodEdge, badEdge]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].edge_id).toBe('e-bad');
+  });
+});

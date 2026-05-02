@@ -185,6 +185,42 @@ class TestDisconnectedContract:
         codes = {i["code"] for i in issues}
         assert "DISCONNECTED_CONTRACT" not in codes
 
+    def test_setup_handler_only_no_warning(self):
+        """A contract with only a setup handler wired (no ABI event edges) must
+        not be flagged as disconnected — the setup port counts as a connection."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasSetupHandler"] = True
+        entity = _entity_node("e1")
+        # Only the setup port is wired — no regular event edges
+        edges = [_edge("ed1", "c1", "event-setup", "e1", "field-id")]
+        issues = validate_graph(_make_config([contract, entity], edges))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes
+
+    def test_setup_handler_enabled_but_not_wired_still_warns(self):
+        """Enabling hasSetupHandler but not wiring any edge still triggers the
+        DISCONNECTED_CONTRACT warning — the flag alone isn't enough."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasSetupHandler"] = True
+        # hasSetupHandler is True but no edge at all
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" in codes
+
+    def test_setup_and_event_wired_no_warning(self):
+        """Both a setup edge and a regular event edge present — definitely no warning."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasSetupHandler"] = True
+        entity_setup = _entity_node("e1", name="Meta")
+        entity_event = _entity_node("e2", name="Transfer")
+        edges = [
+            _edge("ed1", "c1", "event-setup", "e1", "field-id"),
+            _edge("ed2", "c1", "event-Transfer", "e2", "field-id"),
+        ]
+        issues = validate_graph(_make_config([contract, entity_setup, entity_event], edges))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes
+
 
 # ── ENTITY_NO_NAME ────────────────────────────────────────────────────────────
 

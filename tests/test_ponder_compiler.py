@@ -649,3 +649,126 @@ class TestAutoChainField:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         # Should appear at most once in the values block (not duplicated)
         assert src.count("chain: context.chain.name,") <= 1
+
+
+# ── Direct read-{fn} port wired to entity field ───────────────────────────────
+
+class TestDirectReadPort:
+    """Tests for wiring a contract's read-{fn} port directly to an entity field
+    (as opposed to routing through a ContractRead node).
+
+    This is the shorthand path for zero-argument view functions like name(),
+    symbol(), decimals().
+    """
+
+    def _make_config(self, event_name="Transfer", use_setup=False, address="0xABC"):
+        """Build a config where read-name is wired directly to an entity field."""
+        fields = [
+            {"name": "id",   "type": "ID",     "required": True},
+            {"name": "name", "type": "String"},
+        ]
+        read_fn = _read_fn("name", inputs=[], outputs=[{"name": "", "type": "string"}])
+        nodes = [
+            _contract(
+                "c1", "Token",
+                events=[] if use_setup else [_event(event_name)],
+                read_fns=[read_fn],
+                hasSetupHandler=use_setup,
+                address=address,
+            ),
+            _entity("e1", "TokenMeta", fields=fields),
+        ]
+        trigger_handle = "event-setup" if use_setup else f"event-{event_name}"
+        edges = [
+            _edge("ed1", "c1", trigger_handle, "e1", "trigger"),
+            # Wire read-name directly from the contract node (not via ContractRead)
+            _edge("ed2", "c1", "read-name", "e1", "field-name"),
+        ]
+        return _cfg(nodes=nodes, edges=edges)
+
+    def test_generates_readcontract_call(self):
+        """Direct read-fn port must produce a readContract() call, not a comment."""
+        src = compile_ponder(self._make_config())["src/index.ts"]
+        assert "readContract" in src
+        assert "/* contract read:" not in src
+        assert "/* unhandled" not in src
+
+    def test_function_name_correct(self):
+        src = compile_ponder(self._make_config())["src/index.ts"]
+        assert 'functionName: "name"' in src
+
+    def test_abi_imported(self):
+        """The contract's ABI identifier must appear in the import."""
+        src = compile_ponder(self._make_config())["src/index.ts"]
+        assert "TokenAbi" in src
+
+    def test_uses_configured_address(self):
+        """When the contract has a configured address it should be used as the
+        bind address — not event.log.address."""
+        src = compile_ponder(self._make_config(address="0xDEAD"))["src/index.ts"]
+        assert "0xDEAD" in src
+
+    def test_regular_event_includes_blocknumber(self):
+        """In a regular event handler the readContract call must pin to
+        event.block.number to get the value at the right block."""
+        src = compile_ponder(self._make_config(use_setup=False))["src/index.ts"]
+        assert "event.block.number" in src
+
+    def test_setup_handler_omits_blocknumber(self):
+        """In a setup handler there is no event object, so blockNumber must be
+        omitted entirely from the readContract call."""
+        src = compile_ponder(self._make_config(use_setup=True))["src/index.ts"]
+        assert "readContract" in src
+        # blockNumber must not appear anywhere in the setup handler block
+        setup_idx = src.index('ponder.on("Token:setup"')
+        setup_block = src[setup_idx:]
+        assert "event.block.number" not in setup_block
+
+    def test_result_assigned_to_entity_field(self):
+        """The variable produced by readContract must end up in the entity's
+        insert values — not discarded."""
+        src = compile_ponder(self._make_config())["src/index.ts"]
+        # The read result var is used in the values block
+        assert "name:" in src
+        # No leftover comment placeholder
+        assert "/* contract read: read-name */" not in src
+
+    def test_multiple_read_ports_deduped(self):
+        """If the same read-fn port feeds two different entity fields the
+        readContract call must only be emitted once (declared_vars guard)."""
+        fields = [
+            {"name": "id",    "type": "ID",     "required": True},
+            {"name": "name1", "type": "String"},
+            {"name": "name2", "type": "String"},
+        ]
+        read_fn = _read_fn("name")
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")], read_fns=[read_fn]),
+            _entity("e1", "TokenMeta", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "read-name", "e1", "field-name1"),
+            _edge("ed3", "c1", "read-name", "e1", "field-name2"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Only one readContract call for the same read-name port
+        assert src.count('functionName: "name"') == 1
+
+    def test_unknown_fn_produces_comment_not_crash(self):
+        """Wiring a read port whose name doesn't exist in readFunctions should
+        emit a safe comment rather than raising an exception."""
+        fields = [{"name": "id", "type": "ID", "required": True},
+                  {"name": "val", "type": "String"}]
+        nodes = [
+            # No read functions registered — read-ghost is unknown
+            _contract("c1", "Token", events=[_event("Transfer")], read_fns=[]),
+            _entity("e1", "Foo", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "read-ghost",     "e1", "field-val"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Should not crash and should emit some diagnostic comment
+        assert "unknown read fn" in src or "ghost" in src
