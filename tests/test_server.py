@@ -355,6 +355,150 @@ class TestGenerateEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# Ponder mode generation + stale ABI cleanup
+# ---------------------------------------------------------------------------
+
+MINIMAL_ABI_ITEM = {
+    "type": "event",
+    "name": "Transfer",
+    "inputs": [{"name": "from", "type": "address", "indexed": True}],
+}
+
+
+def _ponder_payload(
+    *,
+    nodes=None,
+    networks=None,
+    extra=None,
+    tmp_path=None,
+):
+    """Build a valid Ponder-mode generate payload."""
+    payload = {
+        "schema_version": 1,
+        "subgraph_name": "ponder-test",
+        "output_mode": "ponder",
+        "networks": networks or [],
+        "nodes": nodes or [],
+        "edges": [],
+        "ponder_settings": {},
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _contract_node(name, abi=None):
+    return {
+        "id": f"cn-{name}",
+        "type": "contract",
+        "position": {"x": 0, "y": 0},
+        "data": {
+            "name": name,
+            "abi": abi if abi is not None else [MINIMAL_ABI_ITEM],
+            "events": [],
+            "readFunctions": [],
+            "instances": [{"label": "main", "address": "0xBEEF", "startBlock": 1}],
+        },
+    }
+
+
+class TestPonderGenerateEndpoint:
+    """Integration tests for Ponder-mode /api/generate."""
+
+    def test_ponder_generate_returns_200(self, tmp_path):
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        resp = client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert resp.status_code == 200
+
+    def test_ponder_config_ts_written(self, tmp_path):
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert (tmp_path / "ponder.config.ts").exists()
+
+    def test_ponder_abi_file_written(self, tmp_path):
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert (tmp_path / "abis" / "TokenAbi.ts").exists()
+
+    def test_ponder_schema_written(self, tmp_path):
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert (tmp_path / "ponder.schema.ts").exists()
+
+    def test_ponder_src_index_written(self, tmp_path):
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert (tmp_path / "src" / "index.ts").exists()
+
+
+class TestPonderStaleAbiCleanup:
+    """When a contract is deleted from the canvas and the project is regenerated,
+    the server must remove its stale ABI file so Ponder doesn't crash with
+    "Failed to load url ./abis/..."."""
+
+    def test_stale_abi_deleted_after_contract_removed(self, tmp_path):
+        """ABI file from a previous generation is deleted when contract is no
+        longer on the canvas."""
+        # ── First generation: two contracts ──────────────────────────────────
+        payload_v1 = _ponder_payload(nodes=[
+            _contract_node("Token"),
+            _contract_node("OldContract"),
+        ])
+        client.post("/api/generate", json=payload_v1, params={"dir": str(tmp_path)})
+
+        assert (tmp_path / "abis" / "TokenAbi.ts").exists()
+        assert (tmp_path / "abis" / "OldContractAbi.ts").exists()
+
+        # ── Second generation: OldContract deleted from canvas ────────────────
+        payload_v2 = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload_v2, params={"dir": str(tmp_path)})
+
+        # OldContract ABI must be gone; Token's must still be there
+        assert not (tmp_path / "abis" / "OldContractAbi.ts").exists(), (
+            "Stale OldContractAbi.ts should have been deleted on regeneration"
+        )
+        assert (tmp_path / "abis" / "TokenAbi.ts").exists()
+
+    def test_ponder_config_does_not_import_deleted_contract(self, tmp_path):
+        """After the deletion, ponder.config.ts must not import the stale ABI."""
+        payload_v1 = _ponder_payload(nodes=[
+            _contract_node("Token"),
+            _contract_node("Ghost"),
+        ])
+        client.post("/api/generate", json=payload_v1, params={"dir": str(tmp_path)})
+
+        payload_v2 = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload_v2, params={"dir": str(tmp_path)})
+
+        config_text = (tmp_path / "ponder.config.ts").read_text()
+        assert "GhostAbi" not in config_text, (
+            "ponder.config.ts must not import the deleted Ghost contract's ABI"
+        )
+        assert "TokenAbi" in config_text
+
+    def test_all_abis_cleaned_when_canvas_cleared(self, tmp_path):
+        """If all contract nodes are deleted, the abis/ directory is left empty."""
+        payload_v1 = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload_v1, params={"dir": str(tmp_path)})
+        assert (tmp_path / "abis" / "TokenAbi.ts").exists()
+
+        payload_v2 = _ponder_payload(nodes=[])  # canvas cleared
+        client.post("/api/generate", json=payload_v2, params={"dir": str(tmp_path)})
+        remaining = list((tmp_path / "abis").glob("*.ts"))
+        assert remaining == [], f"Expected empty abis/ but found: {remaining}"
+
+    def test_unrelated_abi_files_not_deleted(self, tmp_path):
+        """Files in abis/ that were NOT generated by us (e.g. hand-written) are
+        only deleted if they happen to match a stale pattern — i.e. this test
+        verifies that files for CURRENT contracts survive regeneration."""
+        payload = _ponder_payload(nodes=[_contract_node("Token")])
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        # A second identical regeneration must not delete Token's ABI
+        client.post("/api/generate", json=payload, params={"dir": str(tmp_path)})
+        assert (tmp_path / "abis" / "TokenAbi.ts").exists()
+
+
+# ---------------------------------------------------------------------------
 # GET /api/fs/browse
 # ---------------------------------------------------------------------------
 

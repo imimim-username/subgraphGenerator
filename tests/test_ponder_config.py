@@ -847,6 +847,121 @@ class TestMixedStartBlock:
 
 
 
+# ── Stale contract filtering ───────────────────────────────────────────────────
+
+class TestStaleContractFiltering:
+    """render_ponder_config must not import ABIs for contracts that are in the
+    networks config but have been deleted from the canvas (no matching node).
+
+    Without this guard the generated ponder.config.ts would import a file that
+    was never written, causing Ponder to crash with "Failed to load url ./abis/...".
+    """
+
+    # Helper: node with a real (non-empty) ABI so the import guard lets it through
+    _ABI_ITEM = [{"type": "event", "name": "Transfer", "inputs": []}]
+
+    def _node_with_abi(self, name):
+        return {
+            "id": f"cn-{name}",
+            "type": "contract",
+            "position": {},
+            "data": {
+                "name": name,
+                "abi": self._ABI_ITEM,
+                "events": [],
+                "readFunctions": [],
+            },
+        }
+
+    def test_deleted_contract_not_imported(self):
+        """Contract in networks_config but not in nodes → no import emitted."""
+        cfg = _cfg(
+            networks=[_net("mainnet", {"OldContract": {"instances": [_inst("0xDEAD")]},
+                                       "Token": {"instances": [_inst("0xBEEF")]}})],
+            nodes=[self._node_with_abi("Token")],   # OldContract deleted from canvas
+        )
+        out = render_ponder_config(cfg)
+        assert "OldContractAbi" not in out
+        assert "OldContract" not in out
+
+    def test_active_contract_still_imported(self):
+        """Contract still on canvas with ABI data → import is present as normal."""
+        cfg = _cfg(
+            networks=[_net("mainnet", {"Token": {"instances": [_inst("0xBEEF")]}})],
+            nodes=[self._node_with_abi("Token")],
+        )
+        out = render_ponder_config(cfg)
+        assert 'import { TokenAbi } from "./abis/TokenAbi"' in out
+
+    def test_contract_without_abi_data_not_imported(self):
+        """Node exists but has no ABI data → import line is omitted.
+
+        Note: the contract may still appear in the ``contracts:`` block (the
+        validator warns about missing ABIs separately).  We only verify that no
+        ``import`` statement is emitted — importing a missing file would crash
+        Ponder at startup.
+        """
+        node_no_abi = {
+            "id": "cn-Empty",
+            "type": "contract",
+            "position": {},
+            "data": {"name": "Empty", "events": [], "readFunctions": []},
+            # intentionally no "abi" key
+        }
+        cfg = _cfg(
+            networks=[_net("mainnet", {"Empty": {"instances": [_inst("0xABC")]}})],
+            nodes=[node_no_abi],
+        )
+        out = render_ponder_config(cfg)
+        # The import line must not be emitted (that would crash Ponder)
+        assert 'import { EmptyAbi }' not in out
+
+    def test_deleted_contract_not_in_contracts_block(self):
+        """Deleted contract must not appear in the contracts: {} block either."""
+        cfg = _cfg(
+            networks=[_net("mainnet", {"Ghost": {"instances": [_inst("0x111")]},
+                                       "Real": {"instances": [_inst("0x222")]}})],
+            nodes=[self._node_with_abi("Real")],
+        )
+        out = render_ponder_config(cfg)
+        # Ghost must not appear anywhere in the config
+        assert "Ghost" not in out
+        # Real should appear in the contracts block
+        assert "Real:" in out
+
+    def test_deleted_contract_not_included_when_other_nodes_exist(self):
+        """When some canvas contract nodes exist, contracts NOT in that set are
+        filtered out, even if they appear in networks_config.
+
+        This covers the real-world scenario: user has two contracts, deletes one,
+        regenerates.  The surviving contract's canvas node is present, so the
+        filter is active and the deleted contract is excluded.
+        """
+        cfg = _cfg(
+            networks=[_net("mainnet", {
+                "Survivor": {"instances": [_inst("0x111")]},
+                "Deleted": {"instances": [_inst("0x222")]},
+            })],
+            nodes=[self._node_with_abi("Survivor")],  # only Survivor on canvas
+        )
+        out = render_ponder_config(cfg)
+        assert "Deleted" not in out
+        assert "DeletedAbi" not in out
+        assert "Survivor:" in out
+
+    def test_canvas_only_contract_still_included(self):
+        """Contract with a canvas node (with ABI) but NO networks entry → still
+        emitted (second-pass behaviour — we don't break existing functionality)."""
+        cfg = _cfg(
+            networks=[],   # no networks panel data at all
+            nodes=[self._node_with_abi("Lone")],
+        )
+        out = render_ponder_config(cfg)
+        # The contract should appear in the contracts block (with placeholder address)
+        assert "Lone:" in out
+        assert 'import { LoneAbi } from "./abis/LoneAbi"' in out
+
+
 # ── Auto chain column in schema ────────────────────────────────────────────────
 
 class TestAutoChainColumn:

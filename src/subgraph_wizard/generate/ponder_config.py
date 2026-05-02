@@ -175,10 +175,27 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     # ── Build contract instance list ──────────────────────────────────────────
     # Full multi-network support: collect ALL instances across all networks.
     # Each entry carries (name, chain, address, startBlock, endBlock).
+    #
+    # IMPORTANT: only include contracts that have a current canvas node.
+    # Contracts that appear in networks_config but whose node has been deleted
+    # from the canvas have no ABI data and no ABI file will be written for them.
+    # Importing a non-existent ABI file causes a hard startup failure.
     contract_entries: list[dict[str, Any]] = []
     seen_contract_types: set[str] = set()
 
     # First pass: pull from networks_config (has addresses + block numbers)
+    #
+    # Canvas-node filter: when the canvas has at least one contract node, only
+    # include network contracts that still have a matching canvas node.  This
+    # prevents importing ABI files for contracts that were deleted from the
+    # canvas (those files no longer exist → Ponder crashes at startup).
+    #
+    # When the canvas is completely empty (no contract nodes at all), we fall
+    # back to including everything from networks_config so the config is still
+    # partially useful (e.g. the chains block is correct) even if the contracts
+    # block references missing ABIs.
+    has_canvas_contracts = bool(contract_node_data)
+
     for net_entry in networks_config:
         slug = net_entry.get("network", "").strip()
         if not slug:
@@ -186,6 +203,12 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         chain_name = _slug_to_ponder_chain_name(slug)
         contracts = net_entry.get("contracts", {})
         for ct_name, ct_data in contracts.items():
+            # Skip if canvas has nodes but this contract is no longer on it.
+            if has_canvas_contracts and ct_name not in contract_node_data:
+                logger.debug(
+                    "Skipping network contract %r — no matching canvas node", ct_name
+                )
+                continue
             instances = ct_data.get("instances", [])
             for inst in instances:
                 addr = inst.get("address", "").strip()
@@ -245,11 +268,22 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         seen_contract_types.add(ct_name)
 
     # ── Build ABI import list ─────────────────────────────────────────────────
+    # Only emit an import when we know an ABI file will be written.  An ABI
+    # file is written only when the contract has a canvas node with non-empty
+    # ABI data.
+    #
+    # Exception (backward-compat mode): when the canvas has NO contract nodes
+    # at all, we cannot determine which files exist, so we emit imports for
+    # everything in seen_contract_types (old behaviour).
     abi_imports: list[str] = []
     for ct_name in sorted(seen_contract_types):
-        abi_imports.append(
-            f'import {{ {ct_name}Abi }} from "./abis/{ct_name}Abi";'
-        )
+        nd = contract_node_data.get(ct_name, {})
+        # Emit when: canvas has this contract's node with ABI data, OR canvas
+        # has no contract nodes at all (old-style config without node data).
+        if nd.get("abi") or not has_canvas_contracts:
+            abi_imports.append(
+                f'import {{ {ct_name}Abi }} from "./abis/{ct_name}Abi";'
+            )
 
     # ── Render chains block ───────────────────────────────────────────────────
     chain_lines: list[str] = []

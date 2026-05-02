@@ -819,6 +819,11 @@ def _generate_ponder(
     # ABI TypeScript files  (abis/<ContractName>Abi.ts)
     abis_dir = output_dir / "abis"
     abis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Track which ABI files belong to the current canvas so we can prune stale
+    # files from previous generations (e.g. contracts that have been deleted).
+    current_abi_filenames: set[str] = set()
+
     for node in config_dict.get("nodes", []):
         if node.get("type") != "contract":
             continue
@@ -829,6 +834,15 @@ def _generate_ponder(
             abi_path = abis_dir / f"{contract_name}Abi.ts"
             abi_path.write_text(abi_ts, encoding="utf-8")
             written.append(str(abi_path))
+            current_abi_filenames.add(abi_path.name)
+
+    # Remove any ABI files left over from a previous generation whose contract
+    # has since been deleted from the canvas.  Stale imports in ponder.config.ts
+    # cause a hard startup failure ("Failed to load url ./abis/...").
+    for stale in abis_dir.glob("*.ts"):
+        if stale.name not in current_abi_filenames:
+            stale.unlink()
+            logger.info("Removed stale ABI file: %s", stale)
 
     # src/api/index.ts  (required by Ponder as the HTTP/API entry point)
     api_dir = output_dir / "src" / "api"
