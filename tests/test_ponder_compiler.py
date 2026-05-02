@@ -794,7 +794,10 @@ class TestImplicitPortsInSetup:
             _edge("ed1", "c1", "event-setup",    "e1", "trigger"),
             _edge("ed2", "c1", implicit_handle,  "e1", "field-val"),
         ]
-        return _cfg(nodes=nodes, edges=edges)
+        networks = [
+            {"network": "mainnet", "contracts": {"Token": {"instances": [{"address": address, "startBlock": 0}]}}},
+        ]
+        return _cfg(nodes=nodes, edges=edges, networks=networks)
 
     def test_implicit_address_uses_configured_address_in_setup(self):
         """implicit-address must resolve to the literal contract address,
@@ -896,7 +899,10 @@ class TestSetupHandlerTryCatch:
             _edge("ed1", "c1",  "event-setup",  "e1",  "trigger"),
             _edge("ed2", "cr1", "out-result",   "e1",  "field-debtToken"),
         ]
-        return _cfg(nodes=nodes, edges=edges)
+        networks = [
+            {"network": "mainnet", "contracts": {"alchemistV3": {"instances": [{"address": address, "startBlock": 0}]}}},
+        ]
+        return _cfg(nodes=nodes, edges=edges, networks=networks)
 
     def test_setup_handler_body_wrapped_in_try_catch(self):
         """The setup handler body must be enclosed in a try { ... } catch block."""

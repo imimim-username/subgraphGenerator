@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from subgraph_wizard.generate.graph_compiler import build_entity_name_map, Edge
+from subgraph_wizard.generate.ponder_config import _slug_to_ponder_chain_name
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +140,25 @@ class PonderCompiler:
 
         # contract_type_name → first configured address (from Networks panel)
         self._network_address_by_type: dict[str, str] = {}
+        # contract_type_name → {chain_name → [addr, addr, ...]} (all instances)
+        self._instances_by_chain: dict[str, dict[str, list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for net_entry in visual_config.get("networks", []):
+            slug = net_entry.get("network", "").strip()
+            chain_name = _slug_to_ponder_chain_name(slug) if slug else ""
             for ct, ct_info in net_entry.get("contracts", {}).items():
+                instances = ct_info.get("instances", [])
                 if ct not in self._network_address_by_type:
-                    instances = ct_info.get("instances", [])
                     if instances:
                         addr = instances[0].get("address", "").strip()
                         if addr:
                             self._network_address_by_type[ct] = addr
+                if chain_name:
+                    for inst in instances:
+                        addr = inst.get("address", "").strip()
+                        if addr:
+                            self._instances_by_chain[ct][chain_name].append(addr)
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -306,15 +318,31 @@ class PonderCompiler:
         params = "{ context }" if event_name == "setup" else "{ event, context }"
 
         if event_name == "setup":
-            # Wrap setup handler body in try/catch so a failed readContract on one
-            # chain (e.g. function not implemented at that address) does not crash
-            # the entire indexer — it just logs a warning and moves on.
-            inner = textwrap.indent("\n".join(body_lines), "    ")
+            # Wrap setup handler body in a per-instance loop so the handler runs
+            # once per deployed address per chain, with an independent try/catch
+            # per instance so one failing readContract doesn't block the others.
+            ct_instances = self._instances_by_chain.get(contract_type, {})
+            chain_lines: list[str] = []
+            for chain_name, addrs in sorted(ct_instances.items()):
+                addr_literals = ", ".join(
+                    f'"{a}" as `0x${{string}}`' for a in addrs
+                )
+                chain_lines.append(f'    {json.dumps(chain_name)}: [{addr_literals}],')
+            if chain_lines:
+                instances_obj = "{\n" + "\n".join(chain_lines) + "\n  }"
+            else:
+                instances_obj = "{}"
+
+            inner = textwrap.indent("\n".join(body_lines), "      ")
             body = (
-                f"  try {{\n"
+                f"  const __instancesByChain: Record<string, `0x${{string}}`[]> = {instances_obj};\n"
+                f"  const __instances = __instancesByChain[context.chain.name] ?? [];\n"
+                f"  for (const __address of __instances) {{\n"
+                f"    try {{\n"
                 f"{inner}\n"
-                f"  }} catch (err) {{\n"
-                f'    console.warn(`[{contract_type}:setup] handler failed on chain ${{context.chain.name}}:`, err);\n'
+                f"    }} catch (err) {{\n"
+                f'      console.warn(`[{contract_type}:setup] handler failed for ${{__address}} on chain ${{context.chain.name}}:`, err);\n'
+                f"    }}\n"
                 f"  }}"
             )
         else:
@@ -702,16 +730,9 @@ class PonderCompiler:
             # be replaced with safe compile-time values.
             if is_setup and source_handle.startswith("implicit-"):
                 if source_handle in ("implicit-address", "implicit-instance-address"):
-                    # Use the contract's configured address instead of event.log.address
-                    addr = data.get("address", "").strip()
-                    if not addr:
-                        instances = data.get("instances", [])
-                        addr = instances[0].get("address", "") if instances else ""
-                    if not addr:
-                        ct_name = data.get("name", "")
-                        addr = self._network_address_by_type.get(ct_name, "")
-                    addr = addr or "0x0000000000000000000000000000000000000000"
-                    return (f'"{addr}" as `0x${{string}}`', [], set())
+                    # Use the per-instance loop variable so each instance gets its
+                    # own address when the handler iterates over all instances.
+                    return ("__address", [], set())
                 # block-number, block-timestamp, tx-hash have no equivalent in setup
                 return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
 
@@ -727,18 +748,22 @@ class PonderCompiler:
                 if not fn:
                     return (f"/* unknown read fn: {fn_name} */", [], set())
 
-                # Resolve bind address (no event in setup context)
-                addr = data.get("address", "").strip()
-                if not addr:
-                    instances = data.get("instances", [])
-                    addr = instances[0].get("address", "") if instances else ""
-                if not addr:
-                    addr = self._network_address_by_type.get(ct_name, "")
-                bind_expr = (
-                    f'"{addr}" as `0x${{string}}`'
-                    if addr
-                    else "event.log.address"
-                )
+                # Resolve bind address — in setup handlers use the per-instance
+                # loop variable so each iteration reads from its own address.
+                if getattr(self, "_compiling_event_name", "") == "setup":
+                    bind_expr = "__address"
+                else:
+                    addr = data.get("address", "").strip()
+                    if not addr:
+                        instances = data.get("instances", [])
+                        addr = instances[0].get("address", "") if instances else ""
+                    if not addr:
+                        addr = self._network_address_by_type.get(ct_name, "")
+                    bind_expr = (
+                        f'"{addr}" as `0x${{string}}`'
+                        if addr
+                        else "event.log.address"
+                    )
 
                 stmts: list[str] = []
                 abi_names: set[str] = {ct_name}
@@ -922,15 +947,21 @@ class PonderCompiler:
                 stmts += bind_stmts
                 abi_names |= bind_abis
             else:
-                ref_data = ref_contract_node["data"]
-                ref_addr = ref_data.get("address", "").strip()
-                if not ref_addr:
-                    ref_instances = ref_data.get("instances", [])
-                    ref_addr = ref_instances[0].get("address", "") if ref_instances else ""
-                if ref_addr:
-                    bind_expr = f'"{ref_addr}" as `0x${{string}}`'
+                is_setup = getattr(self, "_compiling_event_name", "") == "setup"
+                if is_setup and ref_contract_id == contract_id:
+                    # Same contract as the setup handler — use the per-instance
+                    # loop variable so each iteration reads from its own address.
+                    bind_expr = "__address"
                 else:
-                    bind_expr = "event.log.address"
+                    ref_data = ref_contract_node["data"]
+                    ref_addr = ref_data.get("address", "").strip()
+                    if not ref_addr:
+                        ref_instances = ref_data.get("instances", [])
+                        ref_addr = ref_instances[0].get("address", "") if ref_instances else ""
+                    if ref_addr:
+                        bind_expr = f'"{ref_addr}" as `0x${{string}}`'
+                    else:
+                        bind_expr = "event.log.address"
 
             abi_names.add(ref_contract_type)
 
