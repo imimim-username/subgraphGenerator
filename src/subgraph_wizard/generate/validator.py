@@ -313,6 +313,9 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
             events = data.get("events", [])
             if events:
                 event_port_ids = {f"event-{ev['name']}" for ev in events}
+                # Also count the setup handler port as a wired event
+                if data.get("hasSetupHandler"):
+                    event_port_ids.add("event-setup")
                 has_wired_event = any(
                     e["source"] == nid and e.get("sourceHandle", "") in event_port_ids
                     for e in edges
