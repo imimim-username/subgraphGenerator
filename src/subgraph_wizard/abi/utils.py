@@ -82,25 +82,32 @@ def parse_abi(abi_data: str | list[dict]) -> list[dict[str, Any]]:
 
 def validate_abi(abi: list[dict[str, Any]]) -> None:
     """Validate that ABI structure is correct.
-    
+
+    Lenient: entries missing a ``"type"`` field are silently skipped rather than
+    rejected.  Some ABI generators (whatsabi, older Etherscan exports, bytecode
+    decompilers) emit entries without a ``"type"`` key for fallback/receive
+    functions or partially-decoded fragments.  Refusing the entire ABI because
+    of one such entry is worse than skipping it.
+
     Args:
         abi: Parsed ABI list.
-    
+
     Raises:
-        ValidationError: If ABI structure is invalid.
+        ValidationError: If ABI structure is fundamentally invalid (not a list,
+            or contains non-dict entries).
     """
     if not isinstance(abi, list):
         raise ValidationError("ABI must be a list")
-    
+
     if len(abi) == 0:
         raise ValidationError("ABI cannot be empty")
-    
+
     for idx, entry in enumerate(abi):
         if not isinstance(entry, dict):
             raise ValidationError(f"ABI entry {idx} must be a dictionary")
-        
+
         if "type" not in entry:
-            raise ValidationError(f"ABI entry {idx} missing 'type' field")
+            logger.warning("ABI entry %d missing 'type' field — skipping", idx)
 
 
 def solidity_type_to_graph(solidity_type: str) -> str:
@@ -272,10 +279,14 @@ def extract_read_functions(abi: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if entry.get("type") != "function":
             continue
 
-        # Accept view/pure state mutability, and the legacy constant=True flag
+        # Accept view/pure state mutability, the legacy constant=True flag, and
+        # entries where stateMutability is absent (some ABI generators — whatsabi,
+        # bytecode decompilers — omit the field for functions whose mutability
+        # they cannot determine).  Explicitly exclude nonpayable/payable write
+        # functions so they don't pollute the ContractRead dropdown.
         state_mutability = entry.get("stateMutability", "")
         is_constant = entry.get("constant", False)
-        if state_mutability not in ("view", "pure") and not is_constant:
+        if state_mutability in ("nonpayable", "payable") and not is_constant:
             continue
 
         fn_name = entry.get("name", "")

@@ -508,9 +508,9 @@ export default function ContractNode({ id, data, selected }) {
                 </span>
                 {showReads ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </div>
-              {showReads && readFunctions.map((fn) => (
+              {showReads && readFunctions.map((fn, idx) => (
                 <PortRow
-                  key={`read-${fn.name}`}
+                  key={`read-${fn.signature ?? fn.name}-${idx}`}
                   id={`read-${fn.name}`}
                   label={fn.name}
                   portType={fn.signature}
