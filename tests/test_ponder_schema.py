@@ -54,7 +54,7 @@ def _field(name, ftype, required=False, derived_from=None):
 class TestFileStructure:
     def test_empty_config_has_import_only(self):
         out = render_ponder_schema(_cfg())
-        assert 'import { onchainTable } from "ponder"' in out
+        assert 'import { index, onchainTable } from "ponder"' in out
         assert "onchainTable" in out
         assert "export const" not in out
 
@@ -340,7 +340,7 @@ class TestRelations:
 
     def test_relations_import_added(self):
         out = render_ponder_schema(self._two_entity_cfg())
-        assert 'import { onchainTable, relations }' in out
+        assert 'import { index, onchainTable, relations }' in out
 
     def test_no_relations_import_without_refs(self):
         """Schema with no entity refs should only import onchainTable."""
@@ -447,3 +447,67 @@ class TestEdgeCases:
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer", fields=fields)]))
         for fname in ("from", "to", "value", "timestamp"):
             assert fname in out
+
+
+# ── Bug 8: chain column index ─────────────────────────────────────────────────
+
+class TestChainIndex:
+    """Bug 8: every onchainTable must include an index on the chain column."""
+
+    def test_index_imported(self):
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer")]))
+        assert 'import { index, onchainTable }' in out
+
+    def test_chain_index_emitted(self):
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer")]))
+        assert "chainIdx: index().on(table.chain)" in out
+
+    def test_chain_index_on_every_table(self):
+        nodes = [_entity("e1", "Transfer"), _entity("e2", "Swap")]
+        out = render_ponder_schema(_cfg(nodes=nodes))
+        assert out.count("chainIdx: index().on(table.chain)") == 2
+
+    def test_index_callback_syntax(self):
+        """Third argument to onchainTable must use the callback-returning-object syntax."""
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Transfer")]))
+        assert "}), (table) => ({" in out
+
+    def test_bigdecimal_sort_comment(self):
+        """Bug 10: BigDecimal column comment should mention lexicographic sort."""
+        fields = [
+            _field("id", "ID", required=True),
+            _field("price", "BigDecimal"),
+        ]
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "Token", fields)]))
+        assert "lexicographic" in out
+
+
+# ── Bug 12: graph_utils decoupling ───────────────────────────────────────────
+
+class TestGraphUtils:
+    """Bug 12: Edge and build_entity_name_map must live in graph_utils, not graph_compiler."""
+
+    def test_edge_importable_from_graph_utils(self):
+        from subgraph_wizard.generate.graph_utils import Edge  # noqa: F401
+
+    def test_build_entity_name_map_importable_from_graph_utils(self):
+        from subgraph_wizard.generate.graph_utils import build_entity_name_map  # noqa: F401
+
+    def test_edge_still_importable_from_graph_compiler_for_compat(self):
+        """graph_compiler re-exports Edge for backward compatibility."""
+        from subgraph_wizard.generate.graph_compiler import Edge  # noqa: F401
+
+    def test_build_entity_name_map_still_importable_from_graph_compiler(self):
+        from subgraph_wizard.generate.graph_compiler import build_entity_name_map  # noqa: F401
+
+    def test_ponder_compiler_does_not_import_graph_compiler(self):
+        """ponder_compiler should not import from graph_compiler (decoupled)."""
+        import ast, pathlib
+        src = pathlib.Path("src/subgraph_wizard/generate/ponder_compiler.py").read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom):
+                    assert node.module != "subgraph_wizard.generate.graph_compiler", (
+                        "ponder_compiler still imports from graph_compiler"
+                    )

@@ -40,7 +40,7 @@ _PONDER_COLUMN: dict[str, str] = {
     "Boolean":    "t.boolean()",
     "Bytes":      "t.hex()",
     "Address":    "t.hex()",
-    "BigDecimal": "t.text() /* BigDecimal mapped to text; use .toString()/.toFixed() in handlers */",
+    "BigDecimal": "t.text() /* BigDecimal stored as text — numeric sort/filter will be lexicographic; convert with parseFloat() for comparisons */",
 }
 
 # Primitive type names (anything not in this set is treated as an entity ref)
@@ -141,7 +141,7 @@ def render_ponder_schema(visual_config: dict[str, Any]) -> str:
     Returns:
         String content of ponder.schema.ts.
     """
-    from subgraph_wizard.generate.graph_compiler import build_entity_name_map
+    from subgraph_wizard.generate.graph_utils import build_entity_name_map
 
     nodes: list[dict[str, Any]] = visual_config.get("nodes", [])
     edges: list[dict[str, Any]] = visual_config.get("edges", [])
@@ -206,7 +206,7 @@ def render_ponder_schema(visual_config: dict[str, Any]) -> str:
     has_relations = bool(one_rels or many_rels)
 
     # ── Assemble import line ──────────────────────────────────────────────────
-    imports = ["onchainTable"]
+    imports = ["index", "onchainTable"]
     if has_relations:
         imports.append("relations")
     import_line = f'import {{ {", ".join(imports)} }} from "ponder";'
@@ -247,6 +247,8 @@ def render_ponder_schema(visual_config: dict[str, Any]) -> str:
                 table_lines.append("  chain: t.text().notNull(),")
                 seen_fields.add("chain")
 
+        table_lines.append("}), (table) => ({")
+        table_lines.append("  chainIdx: index().on(table.chain),")
         table_lines.append("}));")
         table_lines.append("")
 

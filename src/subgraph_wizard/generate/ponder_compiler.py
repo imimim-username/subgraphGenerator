@@ -24,7 +24,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from subgraph_wizard.generate.graph_compiler import build_entity_name_map, Edge
+from subgraph_wizard.generate.graph_utils import build_entity_name_map, Edge
 from subgraph_wizard.generate.ponder_config import _slug_to_ponder_chain_name
 
 logger = logging.getLogger(__name__)
@@ -78,13 +78,17 @@ def _event_param_expr_ts(port_id: str) -> str:
       implicit-tx-hash      → event.transaction.hash
     """
     if port_id.startswith("implicit-"):
+        # Normalize: implicit-instance-address is semantically identical to
+        # implicit-address (both resolve to the log-emitting contract address).
+        # Canonicalise here so downstream code only needs to handle one form.
+        if port_id == "implicit-instance-address":
+            port_id = "implicit-address"
         rest = port_id[len("implicit-"):]
         mapping = {
-            "address":          "event.log.address",
-            "instance-address": "event.log.address",  # multi-instance: address of emitting contract
-            "block-number":     "event.block.number",
-            "block-timestamp":  "Number(event.block.timestamp)",
-            "tx-hash":          "event.transaction.hash",
+            "address":         "event.log.address",
+            "block-number":    "event.block.number",
+            "block-timestamp": "Number(event.block.timestamp)",
+            "tx-hash":         "event.transaction.hash",
         }
         return mapping.get(rest, f"event.{rest}")
 
@@ -108,6 +112,10 @@ def _event_param_expr_ts(port_id: str) -> str:
 _PONDER_ZERO: dict[str, str] = {
     "BigInt":     "0n",
     "Int":        "0",
+    # BigDecimal is stored as TEXT in Ponder (no native decimal column type).
+    # Arithmetic on BigDecimal fields (e.g. in Math nodes) produces string
+    # concatenation at runtime — use a decimal library (e.g. decimal.js) in
+    # your handler if you need numeric operations on these values.
     "BigDecimal": '"0"',
     "String":     '""',
     "ID":         '""',
@@ -503,9 +511,11 @@ class PonderCompiler:
         # `chain` is auto-injected right after `id` (unless the user already
         # has a field named "chain" in their entity definition).
         user_field_names = {f.get("name", "") for f in fields}
-        values_lines: list[str] = [f"  id: {id_expr},"]
+        # Note: values_lines items must NOT have leading spaces — the emit loop
+        # below adds its own uniform indentation ("      {vl}").
+        values_lines: list[str] = [f"id: {id_expr},"]
         if "chain" not in user_field_names:
-            values_lines.append("  chain: context.chain.name,")
+            values_lines.append("chain: context.chain.name,")
 
         for fld in fields:
             fname = fld.get("name", "")
@@ -522,16 +532,21 @@ class PonderCompiler:
                 )
                 src_type = (self._nodes.get(incoming.source) or {}).get("type")
                 if src_type == "conditional":
-                    # Wrap with conditional guard on the insert
+                    # Wrap with conditional guard on the insert.
+                    # For required (non-nullable) fields use the type's zero
+                    # value as the false-branch fallback; for optional fields
+                    # use null so the column stays NULL rather than undefined
+                    # (which would violate a NOT NULL constraint at runtime).
                     cond_var = _var_name(incoming.source, "cond")
-                    # We can't conditionally omit a key from .values() easily,
-                    # so we emit a ternary. The field must be nullable for this.
-                    values_lines.append(f"  {fname}: {cond_var} ? {val_expr} : undefined,")
+                    field_required = bool(fld.get("required"))
+                    field_type = fld.get("type", "String")
+                    fallback = _PONDER_ZERO.get(field_type, "null") if field_required else "null"
+                    values_lines.append(f"{fname}: {cond_var} ? {val_expr} : {fallback},")
                 else:
-                    values_lines.append(f"  {fname}: {val_expr},")
+                    values_lines.append(f"{fname}: {val_expr},")
             elif fname in event_param_names:
                 # Auto-fill: field name matches an event parameter name.
-                values_lines.append(f"  {fname}: event.args.{fname},")
+                values_lines.append(f"{fname}: event.args.{fname},")
 
         # ── Emit ID suffix-retry insert ──
         # If two events in the same block produce the same ID (e.g. both use
@@ -575,18 +590,80 @@ class PonderCompiler:
         source_handle: str,
         contract_id: str,
         event_name: str,
+        _visited: frozenset[tuple[str, str]] | None = None,
     ) -> bool:
-        """Same event-compatibility check as in GraphCompiler."""
+        """Return True if (source_node, source_handle) is reachable from the
+        current event without crossing a different event's trigger port.
+
+        The check is recursive: for transform nodes (math, typecast, etc.) we
+        inspect every upstream input edge.  If *any* ancestor resolves to a
+        contract port whose event name differs from ``event_name``, the whole
+        subtree is considered unreachable for this event.
+
+        A visited set guards against cycles in the graph.
+        """
+        if _visited is None:
+            _visited = frozenset()
+        key = (source_node_id, source_handle)
+        if key in _visited:
+            return True  # cycle — assume reachable to avoid infinite recursion
+        _visited = _visited | {key}
+
         source_node = self._nodes.get(source_node_id)
         if not source_node:
             return True
         node_type = source_node.get("type", "")
+
+        # ── Contract node: check whether the port belongs to this event ───────
         if node_type == "contract":
-            if source_handle.startswith("event-") and not source_handle.startswith("implicit-"):
+            if source_handle.startswith("event-"):
                 parts = source_handle.split("-", 2)
+                # parts[1] is the event name embedded in the port id
                 if len(parts) >= 2 and parts[1] != event_name:
                     return False
+            # implicit-* ports (block, tx, address) are always available
+            return True
+
+        # ── Transform nodes: recurse into every input edge ────────────────────
+        if node_type in ("math", "typecast", "strconcat", "conditional", "contractread"):
+            for in_handle in self._transform_input_handles(source_node, source_handle):
+                in_edge = self._edge_by_target.get((source_node_id, in_handle))
+                if in_edge and not self._is_reachable_from_event(
+                    in_edge.source, in_edge.source_handle,
+                    contract_id, event_name, _visited,
+                ):
+                    return False
+
         return True
+
+    def _transform_input_handles(
+        self, node: dict[str, Any], source_handle: str
+    ) -> list[str]:
+        """Return the list of target-side input handles for a transform node.
+
+        Used by ``_is_reachable_from_event`` to walk the graph backwards.
+        """
+        t = node.get("type", "")
+        if t == "math":
+            return ["left", "right"]
+        if t == "typecast":
+            return ["value"]
+        if t == "strconcat":
+            return ["left", "right"]
+        if t == "conditional":
+            return ["condition", "value"]
+        if t == "contractread":
+            fn_index = node["data"].get("fnIndex", 0)
+            ref_id = node["data"].get("contractNodeId", "")
+            ref_node = self._nodes.get(ref_id)
+            if ref_node:
+                read_fns = ref_node["data"].get("readFunctions", [])
+                if fn_index < len(read_fns):
+                    fn = read_fns[fn_index]
+                    return ["bind-address"] + [
+                        f"in-{inp['name']}" for inp in fn.get("inputs", [])
+                    ]
+        return []
 
     def _compile_aggregate_upsert(
         self,
@@ -784,10 +861,13 @@ class PonderCompiler:
             # normally reference event.log.address / event.block.number etc. must
             # be replaced with safe compile-time values.
             if is_setup and source_handle.startswith("implicit-"):
-                if source_handle in ("implicit-address", "implicit-instance-address"):
+                # Normalise implicit-instance-address → implicit-address
+                _sh = "implicit-address" if source_handle == "implicit-instance-address" else source_handle
+                if _sh == "implicit-address":
                     # Use the per-instance loop variable so each instance gets its
                     # own address when the handler iterates over all instances.
                     return ("__address", [], set())
+                source_handle = _sh
                 # block-number, block-timestamp, tx-hash have no equivalent in setup
                 return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
 

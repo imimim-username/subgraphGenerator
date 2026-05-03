@@ -33,18 +33,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from subgraph_wizard.generate.graph_utils import Edge, build_entity_name_map  # noqa: F401 — re-exported for backward compat
+
 logger = logging.getLogger(__name__)
 
 # ── Data structures ───────────────────────────────────────────────────────────
-
-
-@dataclass
-class Edge:
-    id: str
-    source: str          # node id
-    source_handle: str   # output port id
-    target: str          # node id
-    target_handle: str   # input port id
+# Edge is imported from graph_utils and re-exported above.
 
 
 @dataclass
@@ -1125,79 +1119,8 @@ class GraphCompiler:
 
 
 # ── Entity name resolution ────────────────────────────────────────────────────
-
-
-def build_entity_name_map(
-    nodes: list[dict[str, Any]],
-    edges: list[dict[str, Any]],
-) -> dict[str, str]:
-    """Return ``{entity_node_id: graphql_type_name}``.
-
-    Entity names are kept as-is when they are unique across the canvas.
-    When multiple entity nodes share the same name (e.g. two contracts both
-    have a ``Deposit`` event entity), each is prefixed with the name of the
-    contract node that feeds into it:
-
-        alchemistV3  + Deposit  →  AlchemistV3Deposit
-        transmuterV3 + Deposit  →  TransmuterV3Deposit
-
-    The prefix is derived by BFS backwards through edges from the entity node
-    to the first contract node found upstream.  If no contract is found the raw
-    name is used with a short node-ID suffix to guarantee uniqueness.
-    """
-    entity_nodes: dict[str, str] = {
-        n["id"]: n["data"].get("name", "")
-        for n in nodes
-        if n.get("type") in ("entity", "aggregateentity") and n.get("data", {}).get("name")
-    }
-    contract_nodes: dict[str, str] = {
-        n["id"]: n["data"].get("name", "")
-        for n in nodes
-        if n.get("type") == "contract" and n.get("data", {}).get("name")
-    }
-
-    # Count how many times each base name appears
-    name_counts: dict[str, int] = {}
-    for name in entity_nodes.values():
-        name_counts[name] = name_counts.get(name, 0) + 1
-
-    # Build backwards adjacency: target_id → [source_id, …]
-    incoming: dict[str, list[str]] = {}
-    for edge in edges:
-        src = edge.get("source", "")
-        tgt = edge.get("target", "")
-        if src and tgt:
-            incoming.setdefault(tgt, []).append(src)
-
-    def _find_contract(entity_id: str) -> str:
-        """BFS backwards from entity node to the first contract node."""
-        queue = [entity_id]
-        visited: set[str] = {entity_id}
-        while queue:
-            cur = queue.pop(0)
-            for src in incoming.get(cur, []):
-                if src in visited:
-                    continue
-                visited.add(src)
-                if src in contract_nodes:
-                    return contract_nodes[src]
-                queue.append(src)
-        return ""
-
-    result: dict[str, str] = {}
-    for node_id, name in entity_nodes.items():
-        if name_counts[name] > 1:
-            contract_name = _find_contract(node_id)
-            if contract_name:
-                prefix = contract_name[0].upper() + contract_name[1:]
-                result[node_id] = f"{prefix}{name}"
-            else:
-                result[node_id] = f"{name}_{node_id[:6]}"
-        else:
-            result[node_id] = name
-
-    return result
-
+# build_entity_name_map is now defined in graph_utils and re-exported at the top
+# of this module for backward compatibility.
 
 # ── Convenience entry point ───────────────────────────────────────────────────
 

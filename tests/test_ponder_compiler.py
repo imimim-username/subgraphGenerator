@@ -1058,3 +1058,221 @@ class TestEdgeCollision:
                 )
 
         return _ctx()
+
+
+# ── Bug 9: Conditional fallback for non-nullable fields ────────────────────────
+
+class TestConditionalFallback:
+    """Bug 9: conditional node must not emit `undefined` for required columns."""
+
+    def _cond_node(self, node_id):
+        return {
+            "id": node_id,
+            "type": "conditional",
+            "position": {"x": 200, "y": 0},
+            "data": {},
+        }
+
+    def test_required_field_uses_zero_not_undefined(self):
+        """A required BigInt field wired through a conditional must fall back to 0n."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "amount", "type": "BigInt", "required": True},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snap", fields=fields),
+            self._cond_node("cond1"),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "cond1", "value"),
+            _edge("ed3", "c1", "implicit-tx-hash", "cond1", "condition"),
+            _edge("ed4", "cond1", "value-out", "e1", "field-amount"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "undefined" not in src
+        # Should fall back to BigInt zero
+        assert "0n" in src
+
+    def test_optional_field_uses_null_not_undefined(self):
+        """A nullable (not required) field wired through conditional falls back to null."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "label", "type": "String", "required": False},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snap", fields=fields),
+            self._cond_node("cond1"),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-tx-hash", "cond1", "condition"),
+            _edge("ed3", "c1", "event-Transfer-from", "cond1", "value"),
+            _edge("ed4", "cond1", "value-out", "e1", "field-label"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "undefined" not in src
+        assert "null" in src
+
+
+# ── Bug 11: _is_reachable_from_event recursive check ─────────────────────────
+
+class TestReachableFromEvent:
+    """Bug 11: values sourced from a different event via a transform must be excluded."""
+
+    def _math_node(self, node_id):
+        return {
+            "id": node_id,
+            "type": "math",
+            "position": {"x": 200, "y": 0},
+            "data": {"operation": "add"},
+        }
+
+    def test_math_sourced_from_other_event_excluded(self):
+        """A math node whose input comes from Transfer should not appear in Deposit handler."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "count", "type": "BigInt"},
+        ]
+        agg_fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "total", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[
+                _event("Transfer", [{"name": "amount", "type": "uint256"}]),
+                _event("Deposit",  [{"name": "value",  "type": "uint256"}]),
+            ]),
+            _agg_entity("agg1", "Stats", agg_fields),
+            self._math_node("m1"),
+        ]
+        edges = [
+            # Math node gets its LEFT input from Transfer-amount (wrong event)
+            _edge("e1", "c1", "event-Transfer-amount", "m1", "left"),
+            # Math result fed into the aggregate's `total` field-in
+            _edge("e2", "m1", "result", "agg1", "field-in-total"),
+            # Aggregate triggered by Deposit
+            _edge("e3", "c1", "event-Deposit", "agg1", "trigger"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # The Deposit handler should not reference event-Transfer-amount
+        deposit_idx = src.find('ponder.on("Token:Deposit"')
+        assert deposit_idx != -1
+        deposit_block = src[deposit_idx:]
+        # The math result from Transfer param must not appear in Deposit handler
+        assert "event.args.amount" not in deposit_block
+
+    def test_implicit_port_always_reachable(self):
+        """implicit-* ports (block number, tx hash) are reachable from any event."""
+        agg_fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "lastBlock", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[
+                _event("Transfer"),
+                _event("Deposit"),
+            ]),
+            _agg_entity("agg1", "Stats", agg_fields),
+        ]
+        edges = [
+            _edge("e1", "c1", "implicit-block-number", "agg1", "field-in-lastBlock"),
+            _edge("e2", "c1", "event-Deposit", "agg1", "trigger"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        deposit_idx = src.find('ponder.on("Token:Deposit"')
+        assert deposit_idx != -1
+        deposit_block = src[deposit_idx:]
+        assert "event.block.number" in deposit_block
+
+
+# ── Bug 13: implicit-instance-address normalisation ───────────────────────────
+
+class TestImplicitInstanceAddress:
+    """Bug 13: implicit-instance-address and implicit-address must be identical."""
+
+    def test_implicit_instance_address_maps_same_as_implicit_address(self):
+        """Both port IDs must produce event.log.address."""
+        assert _event_param_expr_ts("implicit-address") == "event.log.address"
+        assert _event_param_expr_ts("implicit-instance-address") == "event.log.address"
+
+    def test_entity_field_via_implicit_instance_address(self):
+        """Wiring implicit-instance-address to a field produces event.log.address in output."""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "emitter",  "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-emitter"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src
+
+
+# ── Bug 14: values_lines indentation consistency ──────────────────────────────
+
+class TestValuesIndentation:
+    """Bug 14: all fields in .values({}) must have uniform indentation."""
+
+    def test_all_value_fields_uniformly_indented(self):
+        """id, chain, and user fields must all have the same indent in .values({})."""
+        fields = [
+            {"name": "id",     "type": "ID",      "required": True},
+            {"name": "amount", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[
+                _event("Transfer", [{"name": "amount", "type": "uint256"}])
+            ]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "event-Transfer-amount", "e1", "field-amount"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+
+        # Inside the .values({ ... }) block, find lines with "id:", "chain:", "amount:"
+        import re
+        # The values object spans from "values({" to the closing "})"
+        values_match = re.search(r'\.values\(\{(.*?)\}\)', src, re.DOTALL)
+        assert values_match, "Could not find .values({}) block"
+        values_body = values_match.group(1)
+
+        # Each field line must have the same leading-whitespace as the others
+        field_lines = [ln for ln in values_body.splitlines() if ln.strip()]
+        indents = [len(ln) - len(ln.lstrip()) for ln in field_lines]
+        assert len(set(indents)) == 1, (
+            f"Field lines have inconsistent indentation: {dict(zip(field_lines, indents))}"
+        )
+
+
+# ── Bug 15: BigDecimal zero comment ──────────────────────────────────────────
+
+class TestBigDecimalZero:
+    """Bug 15: _PONDER_ZERO BigDecimal is '\"0\"' — the comment must warn about string concat."""
+
+    def test_bigdecimal_zero_comment_present(self):
+        """The _PONDER_ZERO dict must have a comment warning about BigDecimal arithmetic."""
+        import inspect
+        from subgraph_wizard.generate import ponder_compiler
+        src = inspect.getsource(ponder_compiler)
+        # The source must mention the arithmetic / string-concat hazard
+        assert "string" in src and "BigDecimal" in src
+        assert "arithmetic" in src.lower() or "concat" in src.lower()
+
+    def test_bigdecimal_zero_value_is_string_literal(self):
+        """The BigDecimal zero initialiser must be a quoted string (not a bigint literal)."""
+        from subgraph_wizard.generate.ponder_compiler import _PONDER_ZERO
+        bd_zero = _PONDER_ZERO["BigDecimal"]
+        # Must be a quoted string ("0"), NOT a bare numeric literal like 0n
+        assert bd_zero.startswith('"') or bd_zero.startswith("'"), (
+            f"BigDecimal zero should be a quoted string, got: {bd_zero!r}"
+        )
