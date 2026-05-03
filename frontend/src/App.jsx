@@ -895,6 +895,8 @@ export default function App() {
             onAutoLayout={applyLayout}
             onCleanup={cleanupCanvas}
             cleanupStatus={cleanupStatus}
+            contractNodes={nodes.filter((n) => n.type === 'contract')}
+            onFocusNode={focusNode}
           />
         </Panel>
 

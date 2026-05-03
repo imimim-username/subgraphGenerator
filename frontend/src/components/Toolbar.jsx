@@ -3,7 +3,7 @@
  * Nodes can be added via click or by dragging onto the canvas.
  */
 
-import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen, Wand2, Trash2 } from 'lucide-react';
+import { Zap, Database, LayoutGrid, Calculator, ArrowRightLeft, TextCursorInput, GitBranch, BookOpen, Wand2, Trash2, MapPin } from 'lucide-react';
 
 const BTN_BASE = {
   display: 'flex',
@@ -70,6 +70,8 @@ export default function Toolbar({
   onAutoLayout,
   onCleanup,
   cleanupStatus,
+  contractNodes = [],
+  onFocusNode,
 }) {
   // Derive cleanup button label + color from status
   const cleanupOk  = cleanupStatus && typeof cleanupStatus.removed === 'number';
@@ -198,6 +200,43 @@ export default function Toolbar({
         <Trash2 size={12} style={{ color: cleanupColor, flexShrink: 0 }} />
         {cleanupLabel}
       </div>
+
+      {contractNodes.length > 0 && (
+        <>
+          <SectionLabel>Contracts</SectionLabel>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              maxHeight: 180,
+              overflowY: 'auto',
+            }}
+          >
+            {contractNodes.map((node) => {
+              const name = node.data?.name?.trim() || '(unnamed)';
+              return (
+                <div
+                  key={node.id}
+                  onClick={() => onFocusNode?.(node.id)}
+                  style={{
+                    ...BTN_BASE,
+                    cursor: 'pointer',
+                    gap: 5,
+                    color: '#a78bfa',
+                  }}
+                  title={`Jump to ${name}`}
+                >
+                  <MapPin size={11} style={{ color: '#a78bfa', flexShrink: 0 }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {name}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
