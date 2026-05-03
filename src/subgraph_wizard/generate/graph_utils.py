@@ -23,6 +23,41 @@ class Edge:
     target_handle: str   # input port id
 
 
+def schema_var(entity_name: str) -> str:
+    """Convert a PascalCase entity name to a camelCase Ponder schema variable name.
+
+    Used by both ``ponder_compiler`` and ``ponder_schema`` to produce the
+    camelCase identifier that Ponder exports from ``ponder:schema``.
+
+    Handles leading acronyms correctly:
+        Transfer         → transfer
+        TVL              → tvl
+        TVLMetrics       → tvlMetrics
+        ERC20Transfer    → erc20Transfer
+        AlchemistDeposit → alchemistDeposit
+        alreadyLower     → alreadyLower
+    """
+    if not entity_name:
+        return "unknown"
+    # Measure the leading run of uppercase characters.
+    run = 0
+    while run < len(entity_name) and entity_name[run].isupper():
+        run += 1
+    if run == 0:
+        return entity_name                        # already starts lowercase
+    if run == len(entity_name):
+        return entity_name.lower()               # all-caps word: TVL → tvl
+    if run == 1:
+        return entity_name[0].lower() + entity_name[1:]   # MyEntity → myEntity
+    # Multiple leading caps: the last uppercase letter in the run is the start
+    # of the next PascalCase word when followed by a lowercase char
+    # (TVLData: run "TVLD", next 'a' → keep 'D' → tvlData).
+    # When followed by a digit or other non-lower char, lowercase the whole run.
+    if entity_name[run].islower():
+        return entity_name[: run - 1].lower() + entity_name[run - 1 :]
+    return entity_name[:run].lower() + entity_name[run:]
+
+
 def build_entity_name_map(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],

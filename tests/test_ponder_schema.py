@@ -511,3 +511,31 @@ class TestGraphUtils:
                     assert node.module != "subgraph_wizard.generate.graph_compiler", (
                         "ponder_compiler still imports from graph_compiler"
                     )
+
+
+# ── DRY: _schema_var lives only in graph_utils ────────────────────────────────
+
+class TestSchemaVarDRY:
+    """_schema_var must not be defined locally in ponder_compiler or ponder_schema."""
+
+    def test_schema_var_importable_from_graph_utils(self):
+        from subgraph_wizard.generate.graph_utils import schema_var
+        assert schema_var("TVLMetrics") == "tvlMetrics"
+
+    def test_ponder_compiler_does_not_define_schema_var(self):
+        import ast, pathlib
+        src = pathlib.Path("src/subgraph_wizard/generate/ponder_compiler.py").read_text()
+        tree = ast.parse(src)
+        func_names = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        assert "_schema_var" not in func_names, (
+            "ponder_compiler.py still defines _schema_var locally — move it to graph_utils"
+        )
+
+    def test_ponder_schema_does_not_define_schema_var(self):
+        import ast, pathlib
+        src = pathlib.Path("src/subgraph_wizard/generate/ponder_schema.py").read_text()
+        tree = ast.parse(src)
+        func_names = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        assert "_schema_var" not in func_names, (
+            "ponder_schema.py still defines _schema_var locally — move it to graph_utils"
+        )

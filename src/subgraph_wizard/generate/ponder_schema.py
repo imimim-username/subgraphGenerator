@@ -53,33 +53,9 @@ _ARRAY_SAFE: frozenset[str] = frozenset(
 )
 
 
-def _schema_var(entity_name: str) -> str:
-    """Convert a PascalCase entity name to a camelCase schema variable name.
-
-    Handles leading acronyms correctly:
-        Transfer         → transfer
-        TVL              → tvl
-        TVLMetrics       → tvlMetrics
-        ERC20Transfer    → erc20Transfer
-        AlchemistDeposit → alchemistDeposit
-    """
-    if not entity_name:
-        return "unknown"
-    # Measure the leading run of uppercase characters.
-    run = 0
-    while run < len(entity_name) and entity_name[run].isupper():
-        run += 1
-    if run == 0:
-        return entity_name                        # already starts lowercase
-    if run == len(entity_name):
-        return entity_name.lower()               # all-caps word: TVL → tvl
-    if run == 1:
-        return entity_name[0].lower() + entity_name[1:]   # MyEntity → myEntity
-    # Multiple leading caps: last uppercase in run starts next PascalCase word
-    # when followed by a lowercase char (TVLData → tvlData).
-    if entity_name[run].islower():
-        return entity_name[: run - 1].lower() + entity_name[run - 1 :]
-    return entity_name[:run].lower() + entity_name[run:]
+# _schema_var lives in graph_utils to avoid duplication with ponder_compiler.
+# Import it here under its local alias so the rest of this module is unchanged.
+from subgraph_wizard.generate.graph_utils import schema_var as _schema_var
 
 
 def _column_expr(field: dict[str, Any], is_id: bool) -> str:

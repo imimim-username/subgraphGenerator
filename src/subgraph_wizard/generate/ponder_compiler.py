@@ -24,41 +24,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from subgraph_wizard.generate.graph_utils import build_entity_name_map, Edge
+from subgraph_wizard.generate.graph_utils import build_entity_name_map, Edge, schema_var as _schema_var
 from subgraph_wizard.generate.ponder_config import _slug_to_ponder_chain_name
 
 logger = logging.getLogger(__name__)
 
-
-def _schema_var(entity_name: str) -> str:
-    """Convert a PascalCase entity name to a camelCase schema variable name.
-
-    Handles leading acronyms correctly:
-        MyEntity         → myEntity
-        TVL              → tvl
-        TVLMetrics       → tvlMetrics
-        ERC20Transfer    → erc20Transfer
-        alreadyLower     → alreadyLower
-    """
-    if not entity_name:
-        return "unknown"
-    # Measure the leading run of uppercase characters.
-    run = 0
-    while run < len(entity_name) and entity_name[run].isupper():
-        run += 1
-    if run == 0:
-        return entity_name                        # already starts lowercase
-    if run == len(entity_name):
-        return entity_name.lower()               # all-caps word: TVL → tvl
-    if run == 1:
-        return entity_name[0].lower() + entity_name[1:]   # MyEntity → myEntity
-    # Multiple leading caps: the last uppercase letter in the run is the start
-    # of the next PascalCase word when followed by a lowercase char
-    # (TVLData: run "TVLD", next 'a' → keep 'D' → tvlData).
-    # When followed by a digit or other non-lower char, lowercase the whole run.
-    if entity_name[run].islower():
-        return entity_name[: run - 1].lower() + entity_name[run - 1 :]
-    return entity_name[:run].lower() + entity_name[run:]
 
 
 def _var_name(node_id: str, port_id: str) -> str:
