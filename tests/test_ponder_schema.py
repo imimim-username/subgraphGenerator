@@ -95,12 +95,24 @@ class TestNaming:
         assert "export const transfer" in out
 
     def test_all_caps_acronym(self):
+        # TVL is all-uppercase → should become tvl (fully lowercased), not tVL.
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "TVL")]))
-        assert "export const tVL" in out
+        assert "export const tvl" in out
+        assert "tVL" not in out
 
     def test_mixed_acronym(self):
         out = render_ponder_schema(_cfg(nodes=[_entity("e1", "AlchemistDeposit")]))
         assert "export const alchemistDeposit" in out
+
+    def test_leading_acronym_followed_by_word(self):
+        # TVLMetrics: run "TVL" followed by lowercase 'M' → tvlMetrics
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "TVLMetrics")]))
+        assert "export const tvlMetrics" in out
+
+    def test_leading_acronym_then_digit(self):
+        # ERC20Transfer: run "ERC" stopped by '2' → erc20Transfer
+        out = render_ponder_schema(_cfg(nodes=[_entity("e1", "ERC20Transfer")]))
+        assert "export const erc20Transfer" in out
 
     def test_multiple_entities_unique_vars(self):
         nodes = [_entity("e1", "TransferA"), _entity("e2", "TransferB")]

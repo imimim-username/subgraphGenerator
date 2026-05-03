@@ -31,10 +31,34 @@ logger = logging.getLogger(__name__)
 
 
 def _schema_var(entity_name: str) -> str:
-    """Convert PascalCase entity name to camelCase schema variable."""
+    """Convert a PascalCase entity name to a camelCase schema variable name.
+
+    Handles leading acronyms correctly:
+        MyEntity         → myEntity
+        TVL              → tvl
+        TVLMetrics       → tvlMetrics
+        ERC20Transfer    → erc20Transfer
+        alreadyLower     → alreadyLower
+    """
     if not entity_name:
         return "unknown"
-    return entity_name[0].lower() + entity_name[1:]
+    # Measure the leading run of uppercase characters.
+    run = 0
+    while run < len(entity_name) and entity_name[run].isupper():
+        run += 1
+    if run == 0:
+        return entity_name                        # already starts lowercase
+    if run == len(entity_name):
+        return entity_name.lower()               # all-caps word: TVL → tvl
+    if run == 1:
+        return entity_name[0].lower() + entity_name[1:]   # MyEntity → myEntity
+    # Multiple leading caps: the last uppercase letter in the run is the start
+    # of the next PascalCase word when followed by a lowercase char
+    # (TVLData: run "TVLD", next 'a' → keep 'D' → tvlData).
+    # When followed by a digit or other non-lower char, lowercase the whole run.
+    if entity_name[run].islower():
+        return entity_name[: run - 1].lower() + entity_name[run - 1 :]
+    return entity_name[:run].lower() + entity_name[run:]
 
 
 def _var_name(node_id: str, port_id: str) -> str:
@@ -126,9 +150,19 @@ class PonderCompiler:
             )
             for e in raw_edges
         ]
-        self._edge_by_target: dict[tuple[str, str], Edge] = {
-            (e.target, e.target_handle): e for e in self._edges
-        }
+        _edge_by_target: dict[tuple[str, str], Edge] = {}
+        for _e in self._edges:
+            _key = (_e.target, _e.target_handle)
+            if _key in _edge_by_target:
+                logger.warning(
+                    "Multiple edges connect to the same target port (%s → %s). "
+                    "Only the last wire will be used; earlier connections are "
+                    "silently ignored. Remove the duplicate edge in the canvas.",
+                    _e.target,
+                    _e.target_handle,
+                )
+            _edge_by_target[_key] = _e
+        self._edge_by_target = _edge_by_target
         self._edges_from: dict[str, list[Edge]] = defaultdict(list)
         for e in self._edges:
             self._edges_from[e.source].append(e)
@@ -204,7 +238,10 @@ class PonderCompiler:
                     entity_names_needed.update(used_entities)
                     abi_imports_needed.update(used_abis)
                 else:
-                    # No entities wired — emit a minimal stub so the file is valid
+                    # No entities wired — emit a minimal stub so the file is valid.
+                    # Still import the ABI so the user can call readContract()
+                    # inside the stub without hitting a missing-import build error.
+                    abi_imports_needed.add(contract_type)
                     handler_blocks.append(
                         f'ponder.on("{contract_type}:setup", async ({{ context }}) => {{\n'
                         f"  // TODO: seed initial state here\n"
@@ -514,7 +551,15 @@ class PonderCompiler:
         lines.append(f"    }});")
         lines.append(f"    break;")
         lines.append(f"  }} catch (__e) {{")
-        lines.append(f"    if ((__e as any)?.constructor?.name === \"UniqueConstraintError\") continue;")
+        # constructor.name is unreliable after minification (pnpm start / production
+        # builds).  Also check the error message for common unique-constraint strings
+        # from pg (code "23505"), SQLite ("UNIQUE constraint failed"), and Drizzle.
+        lines.append(f"    {{ const __cn = (__e as any)?.constructor?.name ?? \"\";")
+        lines.append(f"      const __em = String((__e as any)?.message ?? \"\");")
+        lines.append(f"      const __isUnique = __cn === \"UniqueConstraintError\" ||")
+        lines.append(f"        (__e as any)?.code === \"23505\" ||")
+        lines.append(f"        __em.toLowerCase().includes(\"unique\");")
+        lines.append(f"      if (__isUnique) continue; }}")
         lines.append(f"    throw __e;")
         lines.append(f"  }}")
         lines.append(f"}}}}")
@@ -622,16 +667,22 @@ class PonderCompiler:
                 zero = _PONDER_ZERO.get(field_type, "0n")
                 initial_values.append(f"{fname}: {zero}")
                 continue
-            # Resolve with prev=zero (new record, no existing row)
-            init_expr, _, _ = self._resolve_value_ts(
+            # Resolve with prev=zero (new record, no existing row).
+            # Use the shared declared_vars so any ContractRead/Math dependency
+            # stmts are emitted into `lines` at most once (via the preamble pass
+            # above), and the init_expr just references the already-declared var.
+            init_expr, init_stmts, init_abis = self._resolve_value_ts(
                 source_node_id=incoming.source,
                 source_handle=incoming.source_handle,
                 contract_type=contract_type,
                 contract_id=contract_id,
-                declared_vars=set(),  # fresh scope — don't pollute the outer declared_vars
+                declared_vars=declared_vars,
                 row_mode=False,
                 row_entity_name=entity_name,
             )
+            # Emit any stmts not already covered by the preamble pass.
+            lines.extend(init_stmts)
+            extra_abi_imports.update(init_abis)
             initial_values.append(f"{fname}: {init_expr}")
 
         # ── Build .onConflictDoUpdate((row) => ({...})) ──
@@ -646,15 +697,19 @@ class PonderCompiler:
                 incoming.source, incoming.source_handle, contract_id, event_name
             ):
                 continue
-            update_expr, _, _ = self._resolve_value_ts(
+            # Use shared declared_vars so any dependency stmts (ContractRead, etc.)
+            # are emitted into `lines` before the insert call, not discarded.
+            update_expr, update_stmts, update_abis = self._resolve_value_ts(
                 source_node_id=incoming.source,
                 source_handle=incoming.source_handle,
                 contract_type=contract_type,
                 contract_id=contract_id,
-                declared_vars=set(),  # fresh scope
+                declared_vars=declared_vars,
                 row_mode=True,
                 row_entity_name=entity_name,
             )
+            lines.extend(update_stmts)
+            extra_abi_imports.update(update_abis)
             src_type = (self._nodes.get(incoming.source) or {}).get("type")
             if src_type == "conditional":
                 cond_var = _var_name(incoming.source, "cond")

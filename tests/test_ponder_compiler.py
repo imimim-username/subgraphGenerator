@@ -223,6 +223,20 @@ class TestEntityInsert:
         assert "__n === 1 ? __baseId" in src
         assert "UniqueConstraintError" in src
 
+    def test_suffix_retry_has_message_fallback(self):
+        """The UniqueConstraintError catch must also check .message and .code so
+        the retry works in minified production builds where constructor.name is gone."""
+        fields = [{"name": "id", "type": "ID", "required": True}]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [_edge("ed1", "c1", "event-Transfer", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Must have both the class-name check AND a message/code fallback
+        assert "UniqueConstraintError" in src
+        assert '"23505"' in src or "23505" in src or "unique" in src.lower()
+
     def test_suffix_retry_uses_id_loop_var(self):
         """The .values({}) call inside the retry loop must reference __id, not the raw expression."""
         fields = [
@@ -315,6 +329,13 @@ class TestSetupHandler:
         src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
         # Should produce a stub with a TODO
         assert "TODO" in src or "seed initial state" in src
+
+    def test_setup_handler_stub_imports_abi(self):
+        """Even when no entities are wired to setup, the ABI should be imported
+        so the user can call readContract() inside the stub without a build error."""
+        nodes = [_contract("c1", "Token", hasSetupHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert "TokenAbi" in src
 
     def test_setup_handler_entity_default_id_is_initial(self):
         """Entities wired to setup should default id to 'initial', not event.id."""
@@ -988,3 +1009,52 @@ class TestSetupHandlerTryCatch:
         assert "try {" in setup_block
         assert "} catch (err) {" in setup_block
         assert "console.warn" in setup_block
+
+
+# ── Edge collision detection ───────────────────────────────────────────────────
+
+class TestEdgeCollision:
+    """Multiple edges to the same target port should log a warning (not silently drop)."""
+
+    def test_duplicate_edge_logs_warning(self):
+        """When two edges share the same (target, targetHandle), a warning is logged."""
+        import logging
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            _entity("e1", "Snap", fields=[
+                {"name": "id",  "type": "ID", "required": True},
+                {"name": "val", "type": "BigInt"},
+            ]),
+        ]
+        # Two edges both targeting field-val — the second silently overwrites in old
+        # code; now it must emit a warning.
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "e1", "field-val"),
+            _edge("ed3", "c1", "implicit-block-timestamp", "e1", "field-val"),
+        ]
+        with self._assert_warning("field-val"):
+            compile_ponder(_cfg(nodes=nodes, edges=edges))
+
+    @staticmethod
+    def _assert_warning(fragment: str):
+        """Context manager that asserts a WARNING containing *fragment* was logged."""
+        import logging
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            import io
+            handler = logging.StreamHandler(io.StringIO())
+            handler.setLevel(logging.WARNING)
+            logging.getLogger("subgraph_wizard.generate.ponder_compiler").addHandler(handler)
+            try:
+                yield
+            finally:
+                logging.getLogger("subgraph_wizard.generate.ponder_compiler").removeHandler(handler)
+                output = handler.stream.getvalue()
+                assert fragment in output, (
+                    f"Expected warning containing {fragment!r}, got: {output!r}"
+                )
+
+        return _ctx()

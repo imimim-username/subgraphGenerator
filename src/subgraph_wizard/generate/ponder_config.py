@@ -219,8 +219,13 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                     start_block = 0
                 # Auto-detect deployment block via Etherscan when startBlock is
                 # 0 and a real address is available.  Mirrors subgraph_yaml.py.
-                # Requires ETHERSCAN_API_KEY in the environment; silently skips
-                # if the key is absent or the lookup fails.
+                #
+                # NOTE: this is a network side-effect inside a render function.
+                # It runs once per instance with startBlock=0 at generation time.
+                # get_contract_deployment_block() handles missing keys internally
+                # and returns None when no API keys are configured.  When it
+                # returns None we warn — Ponder will index from genesis, which is
+                # very slow.  Set keys or specify an explicit startBlock to avoid.
                 _zero = "0x0000000000000000000000000000000000000000"
                 if start_block == 0 and addr and addr != _zero:
                     try:
@@ -230,6 +235,15 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                         detected = get_contract_deployment_block(slug, addr)
                         if detected is not None:
                             start_block = detected
+                        else:
+                            logger.warning(
+                                "startBlock for %s on %s is 0 and could not be "
+                                "auto-detected — Ponder will index from genesis, "
+                                "which is very slow.  Set ETHERSCAN_API_KEY or "
+                                "RPC_API_KEY, or specify an explicit startBlock "
+                                "in the Networks panel.",
+                                addr, slug,
+                            )
                     except Exception as exc:
                         logger.warning(
                             "startBlock auto-detection failed for %s on %s: %s",
