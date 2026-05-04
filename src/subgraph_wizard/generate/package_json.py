@@ -13,9 +13,11 @@ from subgraph_wizard.utils.templating import render_template
 logger = logging.getLogger(__name__)
 
 # Default versions for The Graph dependencies
-# These are the latest stable versions as of development time
-DEFAULT_GRAPH_CLI_VERSION = "0.71.0"
-DEFAULT_GRAPH_TS_VERSION = "0.32.0"
+# Pinned to known-good exact versions for supply-chain safety.
+# Update intentionally after reviewing the changelog and testing.
+# Last verified: 2026-05-04
+DEFAULT_GRAPH_CLI_VERSION = "0.98.1"
+DEFAULT_GRAPH_TS_VERSION = "0.38.2"
 
 
 def render_package_json(

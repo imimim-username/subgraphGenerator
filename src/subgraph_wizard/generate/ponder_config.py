@@ -554,8 +554,25 @@ def render_ponder_tsconfig() -> str:
     return json.dumps(config, indent=2) + "\n"
 
 
+# Pinned exact versions for generated Ponder projects — supply-chain hardening.
+# Do NOT change these to ranges or "latest". Update intentionally after reviewing
+# each package's changelog and testing the generated output end-to-end.
+# Last verified: 2026-05-04
+_PONDER_PKG_VERSIONS = {
+    "hono":       "4.12.16",
+    "ponder":     "0.16.6",
+    "viem":       "2.48.8",
+    "drizzle-kit": "0.31.10",
+}
+
+
 def render_ponder_package_json(project_name: str) -> str:
     """Return a package.json for a Ponder project.
+
+    All dependency versions are pinned to exact known-good releases (see
+    ``_PONDER_PKG_VERSIONS`` above) so that ``pnpm install`` always produces
+    a reproducible install regardless of what is published to the npm registry
+    at the time of use.
 
     Args:
         project_name: The subgraph/project name (becomes the npm package name).
@@ -576,12 +593,12 @@ def render_ponder_package_json(project_name: str) -> str:
             "codegen": "ponder codegen",
         },
         "dependencies": {
-            "hono":   "latest",
-            "ponder": "latest",
-            "viem":   "latest",
+            "hono":   _PONDER_PKG_VERSIONS["hono"],
+            "ponder": _PONDER_PKG_VERSIONS["ponder"],
+            "viem":   _PONDER_PKG_VERSIONS["viem"],
         },
         "devDependencies": {
-            "drizzle-kit": "latest",
+            "drizzle-kit": _PONDER_PKG_VERSIONS["drizzle-kit"],
         },
     }
     return json.dumps(pkg, indent=2) + "\n"
