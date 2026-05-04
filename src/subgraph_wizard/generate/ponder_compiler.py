@@ -173,38 +173,57 @@ class PonderCompiler:
         """Return the TypeScript expression for the deployment address of *ct_name*.
 
         Rules:
-        - Exactly one unique address across all configured instances → hardcode it.
-          (Safe for proxy patterns where the user intentionally chose a specific impl.)
-        - Multiple unique addresses (multi-chain or multi-instance deployment) →
-          fall back to ``event.log.address``.  The event always carries the address of
-          the specific instance that fired it, so this is chain- and instance-aware at
-          runtime.  For proxy contracts with multiple instances the user should wire
-          the implementation address explicitly via the bind-address port.
-        - No address configured at all → fall back to ``event.log.address`` with a
-          warning.
+        - No address configured → ``event.log.address`` (warning).
+        - Exactly one unique address across all chains/instances → hardcode it.
+        - One address per chain (each chain has exactly one instance) → emit a
+          ``context.chain.name``-based ternary.  This is correct for cross-contract
+          reads (e.g. ``debtToken.read.balanceOf(...)``): the handler knows which
+          chain it is on at runtime and picks the right deployment address.
+        - Multiple instances on at least one chain → ``event.log.address``.  Correct
+          for same-contract reads (event.log.address is the firing instance's address);
+          incorrect for cross-contract reads in this edge case — users should wire the
+          address explicitly via the bind-address port.
 
         Does NOT handle the setup-handler case (caller must substitute ``__address``).
         """
+        instances_by_chain: dict[str, list[str]] = self._instances_by_chain.get(ct_name, {})
+
         all_addrs: list[str] = []
-        for chain_addrs in self._instances_by_chain.get(ct_name, {}).values():
+        for chain_addrs in instances_by_chain.values():
             for addr in chain_addrs:
                 if addr not in all_addrs:
                     all_addrs.append(addr)
 
-        if len(all_addrs) == 1:
-            return f'"{all_addrs[0]}" as `0x${{string}}`'
-        if len(all_addrs) > 1:
+        if len(all_addrs) == 0:
             logger.warning(
-                "implicit-instance-address for '%s' has %d configured addresses across "
-                "chains/instances; emitting event.log.address (runtime chain/instance-"
-                "aware). For proxy contracts with multiple instances, wire the "
-                "implementation address explicitly.",
-                ct_name, len(all_addrs),
+                "implicit-instance-address used for '%s' but no address is configured; "
+                "falling back to event.log.address",
+                ct_name,
             )
             return "event.log.address"
+
+        if len(all_addrs) == 1:
+            return f'"{all_addrs[0]}" as `0x${{string}}`'
+
+        # Multiple unique addresses — check whether each chain has exactly one instance.
+        # If so we can emit a chain-conditional that is correct for cross-contract reads.
+        if all(len(addrs) == 1 for addrs in instances_by_chain.values()):
+            chains = list(instances_by_chain.items())
+            # Build nested ternary:  (chain === "a" ? "0x..." : chain === "b" ? "0x..." : "0xlast...")
+            parts: list[str] = []
+            for chain_name, addrs in chains[:-1]:
+                parts.append(f'context.chain.name === "{chain_name}" ? "{addrs[0]}" as `0x${{string}}`')
+            _, last_addrs = chains[-1]
+            expr = " :\n      ".join(parts) + f' :\n      "{last_addrs[0]}" as `0x${{string}}`'
+            return f"(\n      {expr}\n    )"
+
+        # At least one chain has multiple instances — can only resolve at runtime via
+        # the event's own address.  Correct for same-contract implicit reads; users
+        # should wire the address explicitly for cross-contract reads in this scenario.
         logger.warning(
-            "implicit-instance-address used for '%s' but no address is configured; "
-            "falling back to event.log.address",
+            "implicit-instance-address for '%s' has multiple instances on at least one "
+            "chain; emitting event.log.address. For cross-contract reads, wire the "
+            "target address explicitly via the bind-address port.",
             ct_name,
         )
         return "event.log.address"

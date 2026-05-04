@@ -1387,12 +1387,13 @@ class TestImplicitInstanceAddressSemantics:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "event.log.address" in src  # graceful fallback
 
-    def test_multi_instance_falls_back_to_event_log_address(self):
-        """When a contract has multiple instances (multi-chain deployment),
-        implicit-instance-address must fall back to event.log.address so the
-        handler uses the chain/instance-correct address at runtime.
-        Hardcoding the first instance's address would crash on other chains.
-        (Regression test for the alchemistV3 multi-chain crash.)"""
+    def test_multi_chain_one_per_chain_emits_chain_conditional(self):
+        """When each chain has exactly one instance, implicit-instance-address must
+        emit a context.chain.name ternary rather than hardcoding the first address
+        or falling back to event.log.address.
+        This is the correct fix for the alchemistV3 cross-contract read crash:
+        cross-contract reads (balanceOf, symbol, …) need the right address for
+        the chain they are currently executing on."""
         fields = [
             {"name": "id",       "type": "ID",      "required": True},
             {"name": "deployed", "type": "Address"},
@@ -1405,16 +1406,45 @@ class TestImplicitInstanceAddressSemantics:
             _edge("ed1", "c1", "event-Initialized",        "e1", "trigger"),
             _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
         ]
-        # Two different chains → two different addresses → must NOT hardcode either
         networks = [
-            {"network": "mainnet",  "contracts": {"Vault": {"instances": [{"address": "0xMAINNET", "startBlock": 1}]}}},
+            {"network": "mainnet",  "contracts": {"Vault": {"instances": [{"address": "0xMAINNET",  "startBlock": 1}]}}},
             {"network": "optimism", "contracts": {"Vault": {"instances": [{"address": "0xOPTIMISM", "startBlock": 1}]}}},
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
-        # Must NOT hardcode either chain's address — would be wrong on the other chain
-        assert "0xMAINNET" not in src
-        assert "0xOPTIMISM" not in src
-        # Must use event.log.address which is chain+instance-aware at runtime
+        # Both addresses must appear in the ternary expression
+        assert "0xMAINNET"  in src
+        assert "0xOPTIMISM" in src
+        # Must use context.chain.name to select the right one at runtime
+        assert "context.chain.name" in src
+        # Must NOT fall back to event.log.address (wrong for cross-contract reads)
+        assert "event.log.address" not in src
+
+    def test_multi_instance_same_chain_falls_back_to_event_log_address(self):
+        """When a chain has multiple instances of the same contract type, the
+        correct address can only be resolved at runtime via event.log.address.
+        (e.g. two different ERC-20 tokens on mainnet using the same ABI.)"""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "deployed", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", events=[_event("Initialized")]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Initialized",        "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
+        ]
+        # Two instances on the SAME chain → must fall back to event.log.address
+        networks = [
+            {"network": "mainnet", "contracts": {"Vault": {"instances": [
+                {"address": "0xVAULT_A", "startBlock": 1},
+                {"address": "0xVAULT_B", "startBlock": 1},
+            ]}}},
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
+        assert "0xVAULT_A" not in src
+        assert "0xVAULT_B" not in src
         assert "event.log.address" in src
 
     def test_setup_handler_both_address_ports_use_loop_var(self):
