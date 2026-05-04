@@ -102,6 +102,8 @@ export default function Toolbar({
         border: '1px solid var(--border)',
         boxShadow: '0 4px 24px rgba(0,0,0,0.45)',
         minWidth: 150,
+        maxHeight: 'calc(100vh - 80px)',
+        overflowY: 'auto',
       }}
     >
       <SectionLabel>Source / Target</SectionLabel>
