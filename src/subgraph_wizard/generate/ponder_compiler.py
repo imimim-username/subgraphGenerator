@@ -218,14 +218,9 @@ class PonderCompiler:
             return f"(\n      {expr}\n    )"
 
         # At least one chain has multiple instances — can only resolve at runtime via
-        # the event's own address.  Correct for same-contract implicit reads; users
-        # should wire the address explicitly for cross-contract reads in this scenario.
-        logger.warning(
-            "implicit-instance-address for '%s' has multiple instances on at least one "
-            "chain; emitting event.log.address. For cross-contract reads, wire the "
-            "target address explicitly via the bind-address port.",
-            ct_name,
-        )
+        # the event's own address.  This is correct for same-contract reads: when an
+        # event fires from instance A, event.log.address IS instance A's address.
+        # (e.g. alUSD transmuter fires → event.log.address = alUSD transmuter address)
         return "event.log.address"
 
     # ── Public API ──────────────────────────────────────────────────────────────
