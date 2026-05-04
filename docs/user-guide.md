@@ -413,8 +413,33 @@ playground).
 
 **startBlock auto-detection.** If a contract instance has no start block set (or 0),
 the generator queries Etherscan to find the deployment block automatically, provided
-`ETHERSCAN_API_KEY` is set in the environment. This mirrors the behaviour of the
-The Graph output mode.
+`ETHERSCAN_API_KEY` is set in the environment.
+
+**Entity ID uniqueness.** The default entity ID expression is:
+
+```typescript
+event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
+```
+
+This ensures uniqueness even when the same event fires multiple times in the same transaction
+(e.g. batched calls, reentrancy). Using only the transaction hash would cause the second
+occurrence to silently fail or overwrite the first.
+
+**`implicit-instance-address` in multi-chain deployments.** The `implicit-instance-address`
+port on a Contract node emits the statically-configured deployment address, not the runtime
+`event.log.address`. For contracts with multiple instances across chains, the compiler
+automatically selects the right address:
+
+| Deployment pattern | Generated expression |
+|---|---|
+| One unique address (all chains same, or single-chain) | `"0x..."` hardcoded literal |
+| One instance per chain | `context.chain.name === "mainnet" ? "0x..." : context.chain.name === "optimism" ? "0x..." : "0x..."` |
+| Multiple instances on the same chain (same ABI, different contracts) | `event.log.address` (runtime, always correct for same-contract reads) |
+
+The `event.log.address` fallback is the right answer when a contract type has multiple
+instances per chain (e.g. alUSD transmuter + alETH transmuter both use the same ABI): each
+event carries the address of the instance that fired it, so `event.log.address` is always
+the correct instance address at runtime.
 
 ### Running the indexer
 

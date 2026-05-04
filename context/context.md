@@ -520,7 +520,7 @@ Matches graph-cli's behaviour: only the keccak256 hash is stored in log topics.
 
 ## Testing
 
-**1119+ tests passing.**
+**1122+ tests passing.**
 
 ```bash
 pytest              # all tests
@@ -577,8 +577,8 @@ cd frontend && npm run build
 ## Git / Deployment
 
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
-- Active branch: `frokfixes` (bug-fix + UI polish; not yet merged to `main`)
-- Push command: `git push origin frokfixes`
+- Active branch: `main`
+- Push command: `GIT_SSH_COMMAND="ssh -i /workspace/extra/github-keys/github_deploy -o StrictHostKeyChecking=no" git push origin main`
 
 ---
 
@@ -616,6 +616,48 @@ as an argument — but `token` is the zero-address when `amount == 0`, causing a
 - Wrap reads in `try/catch` — silently swallows real errors
 
 Not a simple fix. Architectural tradeoff to revisit if user demand warrants it.
+
+---
+
+## Recent Changes (2026-05-04)
+
+### Bug fixes (frok follow-up)
+
+**Multi-chain crash — `implicit-instance-address` using wrong chain's address**
+
+When a contract had multiple instances across chains (e.g. `alchemistV3` on mainnet and
+Optimism), the compiler hardcoded the first configured instance's address. A handler
+processing an Optimism event would call the mainnet contract address, causing an RPC error.
+
+Fixed by adding `_instance_address_expr(ct_name)` to `ponder_compiler.py`, which now
+applies three-way logic:
+
+| Case | Generated expression |
+|---|---|
+| 0 addresses configured | `event.log.address` (+ warning) |
+| 1 unique address | `"0x..."` hardcoded literal |
+| One instance per chain | `context.chain.name === "X" ? "0xA" : context.chain.name === "Y" ? "0xB" : "0xC"` ternary |
+| Multiple instances on same chain | `event.log.address` (runtime-correct for same-contract reads) |
+
+The one-per-chain ternary is correct for both same-contract reads and cross-contract reads
+(e.g. `debtToken.read.balanceOf(...)` from an `alchemistV3` handler).
+
+The multi-per-same-chain fallback (`event.log.address`) is correct for same-contract
+reads — when the alUSD transmuter fires an event, `event.log.address` IS the alUSD transmuter
+address. This handles the alUSD/alETH pattern (two instances of the same ABI on each chain)
+without any extra canvas wiring.
+
+All three address-binding call sites updated: `implicit-instance-address` wire, `read-{fn}`
+direct port, and ContractRead node auto-bind.
+
+**Spurious warning removed**
+
+The previous multi-instance-per-chain warning ("emitting event.log.address") was alarming
+but the generated code was correct. Warning removed — `event.log.address` is always right
+when the event itself tells you which instance fired.
+
+**`frokfixes` branch merged to `main`** — all fixes from the previous session are now
+on `main` and pushed.
 
 ---
 

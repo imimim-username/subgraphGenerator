@@ -1,5 +1,10 @@
 # Ponder Output Mode — Design Plan
 
+> **HISTORICAL REFERENCE** — This was the pre-implementation design plan written on the
+> `ponder` branch. Ponder output is now fully implemented and merged to `main`.
+> For the current architecture, see `docs/architecture.md` (section 4.5a) and
+> `context/context.md`.
+
 Branch: `ponder`
 
 ## Overview
