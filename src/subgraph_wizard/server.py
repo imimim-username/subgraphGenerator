@@ -10,6 +10,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -17,6 +18,27 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Subgraph Wizard", version="0.1.0")
+
+# Restrict cross-origin requests to localhost only.
+# In normal use the React bundle is served by this same FastAPI process
+# (same origin, no CORS needed). The middleware only matters when running
+# the Vite dev server alongside the backend during development.
+# Binding to 0.0.0.0 means the server is reachable on the local network;
+# limiting allowed origins to localhost variants prevents remote pages from
+# hitting the API even in that case.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost",
+        "http://127.0.0.1",
+        # Vite / CRA dev servers typically run on 5173 or 3000; allow any
+        # localhost port by using a regex-style allow_origin_regex instead.
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
+)
 
 # Path to the pre-built React frontend bundle
 _STATIC_DIR = Path(__file__).parent / "static"

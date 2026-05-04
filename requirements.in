@@ -1,6 +1,14 @@
 # Direct runtime dependencies for subgraph-wizard.
-# This file is the human-maintained source of truth.
-# Run `pip-compile --generate-hashes requirements.in` to regenerate requirements.txt.
+# This file is the human-maintained source of truth; use floor bounds (>=) here.
+#
+# INSTALL (hash-verified, reproducible):
+#   pip install --require-hashes -r requirements.txt
+#
+# DO NOT install from this file directly — it does not pin transitive deps.
+#
+# REGENERATE lockfile after editing this file:
+#   pip-compile --generate-hashes requirements.in
+#   (pip-tools must be installed: pip install pip-tools)
 fastapi>=0.110.0
 jinja2>=3.1.0
 python-dotenv>=1.0.0
