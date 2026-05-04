@@ -290,8 +290,8 @@ class TestStringConcatNode:
         result = compile_graph(_make_config([contract, sc, entity], edges))
         src = result["Token"]
         assert ".concat(" in src
-        # No separator → no double concat
-        assert '"-"' not in src
+        # No separator → no separator concat call in the strconcat expression
+        assert '.concat("-")' not in src
 
     def test_concat_with_separator(self):
         contract = _contract_node("c1", "Token", events=[TRANSFER_EVENT])
@@ -1387,13 +1387,15 @@ class TestEntityTriggerEvents:
         assert "handleDeposit" in result["Vault"]
 
     def test_entity_trigger_events_default_id_expression(self):
-        """When no field-id wire exists, entity uses tx.hash as default ID."""
+        """When no field-id wire exists, entity uses tx.hash + logIndex as default ID.
+        tx hash alone is not unique when the same event fires multiple times per tx."""
         contract = _contract_node("c1", "Vault", events=[DEPOSIT_EVENT])
         entity = self._entity_with_trigger([
             {"contractId": "c1", "contractName": "Vault", "eventName": "Deposit"}
         ])
         src = compile_graph(_make_config([contract, entity], []))["Vault"]
         assert "toHexString()" in src
+        assert "logIndex" in src
 
     def test_entity_triggered_by_multiple_events(self):
         """Entity with two triggerEvents generates two separate handlers."""
@@ -1605,8 +1607,9 @@ class TestTriggerPortFallback:
         src = compile_graph(_make_config([contract, agg], edges))["Vault"]
         assert "event.params.event-Deposit" not in src
 
-    def test_trigger_port_fallback_uses_tx_hash(self):
-        """The fallback expression must be the tx hash (a safe unique-per-event id)."""
+    def test_trigger_port_fallback_uses_tx_hash_and_log_index(self):
+        """When a trigger port is wired to field-id, fallback must include logIndex
+        so the ID stays unique when the same event fires multiple times per tx."""
         contract = _contract_node("c1", "Vault", events=[self.DEPOSIT_EVENT])
         entity = _entity_node("e1", "Record", fields=[
             {"name": "id", "type": "ID", "required": True},
@@ -1616,6 +1619,7 @@ class TestTriggerPortFallback:
         ]
         src = compile_graph(_make_config([contract, entity], edges))["Vault"]
         assert "transaction.hash" in src
+        assert "logIndex" in src
 
 
 # ── Shared declared_vars across entity blocks (Bug: duplicate let declarations) ─

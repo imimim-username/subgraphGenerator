@@ -149,13 +149,13 @@ def _event_param_expr(port_id: str) -> str:
     if len(parts) == 3:
         return f"event.params.{parts[2]}"
     # Trigger port (event-{EventName}, 2 parts) — no meaningful value.
-    # Return the tx hash as a safe per-event unique identifier.
+    # Return tx hash + log index as a safe unique-per-event identifier.
     logger.warning(
-        "Trigger port %r wired as a value source; using event.transaction.hash as fallback. "
+        "Trigger port %r wired as a value source; using event.transaction.hash + logIndex as fallback. "
         "Wire an implicit-* or event-{Name}-{param} port for a stable ID.",
         port_id,
     )
-    return "event.transaction.hash.toHexString()"
+    return 'event.transaction.hash.toHexString() + "-" + event.logIndex.toString()'
 
 
 # ── Core compiler ──────────────────────────────────────────────────────────────
@@ -464,9 +464,11 @@ class GraphCompiler:
         var = f"{safe_name[0].lower()}{safe_name[1:]}Entity"
 
         # ── Stable ID — emit dep statements before the load call ──
-        # Auto-fill: if id field is not wired and there's a single event param,
-        # use the tx hash + log index as default (stable per-event ID).
-        id_expr = "event.transaction.hash.toHexString()"
+        # Auto-fill: if id field is not wired, use tx hash + log index as default.
+        # tx hash alone is NOT unique when a contract emits the same event multiple
+        # times in one transaction (e.g. ERC-1155 batch, DEX routers).  Including
+        # the log index makes the ID unique per event occurrence.
+        id_expr = 'event.transaction.hash.toHexString() + "-" + event.logIndex.toString()'
         id_edge = self._edge_by_target.get((entity_id, "field-id"))
         if id_edge:
             id_expr, id_dep_stmts, id_dep_imports = self._resolve_value(
