@@ -167,6 +167,48 @@ class PonderCompiler:
                         if addr:
                             self._instances_by_chain[ct][chain_name].append(addr)
 
+    # ── Helpers ─────────────────────────────────────────────────────────────────
+
+    def _instance_address_expr(self, ct_name: str) -> str:
+        """Return the TypeScript expression for the deployment address of *ct_name*.
+
+        Rules:
+        - Exactly one unique address across all configured instances → hardcode it.
+          (Safe for proxy patterns where the user intentionally chose a specific impl.)
+        - Multiple unique addresses (multi-chain or multi-instance deployment) →
+          fall back to ``event.log.address``.  The event always carries the address of
+          the specific instance that fired it, so this is chain- and instance-aware at
+          runtime.  For proxy contracts with multiple instances the user should wire
+          the implementation address explicitly via the bind-address port.
+        - No address configured at all → fall back to ``event.log.address`` with a
+          warning.
+
+        Does NOT handle the setup-handler case (caller must substitute ``__address``).
+        """
+        all_addrs: list[str] = []
+        for chain_addrs in self._instances_by_chain.get(ct_name, {}).values():
+            for addr in chain_addrs:
+                if addr not in all_addrs:
+                    all_addrs.append(addr)
+
+        if len(all_addrs) == 1:
+            return f'"{all_addrs[0]}" as `0x${{string}}`'
+        if len(all_addrs) > 1:
+            logger.warning(
+                "implicit-instance-address for '%s' has %d configured addresses across "
+                "chains/instances; emitting event.log.address (runtime chain/instance-"
+                "aware). For proxy contracts with multiple instances, wire the "
+                "implementation address explicitly.",
+                ct_name, len(all_addrs),
+            )
+            return "event.log.address"
+        logger.warning(
+            "implicit-instance-address used for '%s' but no address is configured; "
+            "falling back to event.log.address",
+            ct_name,
+        )
+        return "event.log.address"
+
     # ── Public API ──────────────────────────────────────────────────────────────
 
     def compile(self) -> dict[str, str]:
@@ -850,28 +892,15 @@ class PonderCompiler:
                 return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
 
             # ── implicit-instance-address: configured deployment address ─────
-            # This is semantically different from implicit-address
-            # (event.log.address).  implicit-address is the proxy address that
-            # *emitted* the log; implicit-instance-address is the deployment
-            # address configured on the Networks panel — for proxy contracts
-            # these differ.  We return the literal from the Networks panel so
-            # the handler references the correct implementation address.
+            # Semantically different from implicit-address (event.log.address).
+            # implicit-address is the proxy address that *emitted* the log;
+            # implicit-instance-address is the deployment address configured on
+            # the Networks panel.  For single-instance deployments we hardcode
+            # it; for multi-chain / multi-instance deployments we fall back to
+            # event.log.address which is chain- and instance-aware at runtime.
             if source_handle == "implicit-instance-address":
                 ct_name = data.get("name", contract_type)
-                addr = data.get("address", "").strip()
-                if not addr:
-                    instances = data.get("instances", [])
-                    addr = instances[0].get("address", "") if instances else ""
-                if not addr:
-                    addr = self._network_address_by_type.get(ct_name, "")
-                if addr:
-                    return (f'"{addr}" as `0x${{string}}`', [], set())
-                logger.warning(
-                    "implicit-instance-address used for %s but no address is "
-                    "configured; falling back to event.log.address",
-                    ct_name,
-                )
-                return ("event.log.address", [], set())
+                return (self._instance_address_expr(ct_name), [], set())
 
             if source_handle.startswith("event-") or source_handle.startswith("implicit-"):
                 expr = _event_param_expr_ts(source_handle)
@@ -890,17 +919,7 @@ class PonderCompiler:
                 if getattr(self, "_compiling_event_name", "") == "setup":
                     bind_expr = "__address"
                 else:
-                    addr = data.get("address", "").strip()
-                    if not addr:
-                        instances = data.get("instances", [])
-                        addr = instances[0].get("address", "") if instances else ""
-                    if not addr:
-                        addr = self._network_address_by_type.get(ct_name, "")
-                    bind_expr = (
-                        f'"{addr}" as `0x${{string}}`'
-                        if addr
-                        else "event.log.address"
-                    )
+                    bind_expr = self._instance_address_expr(ct_name)
 
                 stmts: list[str] = []
                 abi_names: set[str] = {ct_name}
@@ -1090,15 +1109,7 @@ class PonderCompiler:
                     # loop variable so each iteration reads from its own address.
                     bind_expr = "__address"
                 else:
-                    ref_data = ref_contract_node["data"]
-                    ref_addr = ref_data.get("address", "").strip()
-                    if not ref_addr:
-                        ref_instances = ref_data.get("instances", [])
-                        ref_addr = ref_instances[0].get("address", "") if ref_instances else ""
-                    if ref_addr:
-                        bind_expr = f'"{ref_addr}" as `0x${{string}}`'
-                    else:
-                        bind_expr = "event.log.address"
+                    bind_expr = self._instance_address_expr(ref_contract_type)
 
             abi_names.add(ref_contract_type)
 

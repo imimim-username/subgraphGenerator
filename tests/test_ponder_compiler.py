@@ -671,7 +671,8 @@ class TestDirectReadPort:
             # Wire read-name directly from the contract node (not via ContractRead)
             _edge("ed2", "c1", "read-name", "e1", "field-name"),
         ]
-        return _cfg(nodes=nodes, edges=edges)
+        networks = [{"network": "mainnet", "contracts": {"Token": {"instances": [{"address": address, "startBlock": 0}]}}}]
+        return _cfg(nodes=nodes, edges=edges, networks=networks)
 
     def test_generates_readcontract_call(self):
         """Direct read-fn port must produce a readContract() call, not a comment."""
@@ -1198,33 +1199,35 @@ class TestImplicitInstanceAddress:
         assert "event.log.address" in src
 
     def test_entity_field_via_implicit_instance_address_uses_configured_addr(self):
-        """When an address IS configured, implicit-instance-address should emit
-        that literal address, NOT event.log.address."""
+        """When exactly one address IS configured, implicit-instance-address should
+        emit that literal address, NOT event.log.address."""
         fields = [
             {"name": "id",      "type": "ID",      "required": True},
             {"name": "emitter", "type": "Address"},
         ]
         nodes = [
-            _contract("c1", "Token", events=[_event("Transfer")], address="0xFEED"),
+            _contract("c1", "Token", events=[_event("Transfer")]),
             _entity("e1", "Snap", fields=fields),
         ]
         edges = [
             _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
             _edge("ed2", "c1", "implicit-instance-address", "e1", "field-emitter"),
         ]
-        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # Single instance → address is hardcoded in the generated TS
+        networks = [{"network": "mainnet", "contracts": {"Token": {"instances": [{"address": "0xFEED", "startBlock": 0}]}}}]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
         assert "0xFEED" in src
         assert "event.log.address" not in src  # must NOT be the log-emitting address
 
     def test_implicit_address_and_instance_address_different_with_configured_addr(self):
-        """The two ports must produce DIFFERENT output when an address is configured."""
+        """The two ports must produce DIFFERENT output when a single address is configured."""
         # implicit-address → event.log.address
-        # implicit-instance-address → literal "0xDEAD"
+        # implicit-instance-address → literal "0xDEAD" (single instance)
         fields = [{"name": "id", "type": "ID", "required": True},
                   {"name": "a", "type": "Address"},
                   {"name": "b", "type": "Address"}]
         nodes = [
-            _contract("c1", "Token", events=[_event("Transfer")], address="0xDEAD"),
+            _contract("c1", "Token", events=[_event("Transfer")]),
             _entity("e1", "Snap", fields=fields),
         ]
         edges = [
@@ -1232,7 +1235,8 @@ class TestImplicitInstanceAddress:
             _edge("ed2", "c1", "implicit-address",          "e1", "field-a"),
             _edge("ed3", "c1", "implicit-instance-address", "e1", "field-b"),
         ]
-        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        networks = [{"network": "mainnet", "contracts": {"Token": {"instances": [{"address": "0xDEAD", "startBlock": 0}]}}}]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
         assert "event.log.address" in src   # implicit-address
         assert "0xDEAD" in src              # implicit-instance-address
 
@@ -1307,21 +1311,22 @@ class TestImplicitInstanceAddressSemantics:
     implicit-address stays as event.log.address (proxy address)."""
 
     def test_uses_configured_address_when_available(self):
-        """When a deployment address is set on the contract node,
-        implicit-instance-address must emit that literal."""
+        """When exactly one deployment address is configured in the Networks panel,
+        implicit-instance-address must emit that literal (not event.log.address)."""
         fields = [
             {"name": "id",       "type": "ID",      "required": True},
             {"name": "deployed", "type": "Address"},
         ]
         nodes = [
-            _contract("c1", "Vault", events=[_event("Deposit")], address="0xC0FFEE"),
+            _contract("c1", "Vault", events=[_event("Deposit")]),
             _entity("e1", "Snap", fields=fields),
         ]
         edges = [
             _edge("ed1", "c1", "event-Deposit",            "e1", "trigger"),
             _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
         ]
-        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        networks = [{"network": "mainnet", "contracts": {"Vault": {"instances": [{"address": "0xC0FFEE", "startBlock": 0}]}}}]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
         assert "0xC0FFEE" in src
         assert "event.log.address" not in src
 
@@ -1381,6 +1386,36 @@ class TestImplicitInstanceAddressSemantics:
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "event.log.address" in src  # graceful fallback
+
+    def test_multi_instance_falls_back_to_event_log_address(self):
+        """When a contract has multiple instances (multi-chain deployment),
+        implicit-instance-address must fall back to event.log.address so the
+        handler uses the chain/instance-correct address at runtime.
+        Hardcoding the first instance's address would crash on other chains.
+        (Regression test for the alchemistV3 multi-chain crash.)"""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "deployed", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", events=[_event("Initialized")]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Initialized",        "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
+        ]
+        # Two different chains → two different addresses → must NOT hardcode either
+        networks = [
+            {"network": "mainnet",  "contracts": {"Vault": {"instances": [{"address": "0xMAINNET", "startBlock": 1}]}}},
+            {"network": "optimism", "contracts": {"Vault": {"instances": [{"address": "0xOPTIMISM", "startBlock": 1}]}}},
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
+        # Must NOT hardcode either chain's address — would be wrong on the other chain
+        assert "0xMAINNET" not in src
+        assert "0xOPTIMISM" not in src
+        # Must use event.log.address which is chain+instance-aware at runtime
+        assert "event.log.address" in src
 
     def test_setup_handler_both_address_ports_use_loop_var(self):
         """In setup handlers, both implicit-address and implicit-instance-address
