@@ -143,38 +143,39 @@ body {
 
 /* ── React Flow Controls — high-contrast button styling ── */
 .react-flow__controls {
-  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.7);
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid #475569;
+  border: 1px solid #64748b;
 }
 .react-flow__controls-button {
-  background: #1e293b;
-  border-bottom: 1px solid #334155;
-  width: 28px;
-  height: 28px;
+  background: #0f172a;
+  border-bottom: 1px solid #475569;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s;
+  transition: background 0.1s;
 }
 .react-flow__controls-button:last-child {
   border-bottom: none;
 }
 .react-flow__controls-button:hover {
-  background: #334155;
+  background: #1e40af;
 }
 .react-flow__controls-button svg {
-  fill: #cbd5e1;
-  stroke: #cbd5e1;
-  width: 14px;
-  height: 14px;
-  max-width: 14px;
-  max-height: 14px;
+  fill: #ffffff;
+  stroke: #ffffff;
+  width: 15px;
+  height: 15px;
+  max-width: 15px;
+  max-height: 15px;
+  opacity: 1;
 }
 .react-flow__controls-button:hover svg {
-  fill: #f1f5f9;
-  stroke: #f1f5f9;
+  fill: #ffffff;
+  stroke: #ffffff;
 }
 
 /* ── Validation outlines (applied via className on React Flow nodes) ── */
