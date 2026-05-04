@@ -2183,3 +2183,97 @@ class TestEventParamExpr:
         # Two-part port: trigger port — no meaningful value, falls back to tx hash
         result = _event_param_expr("event-Deposit")
         assert "transaction.hash" in result
+
+
+# ── Bug 2: _is_reachable_from_event recursive check ──────────────────────────
+
+class TestGraphCompilerReachableRecursive:
+    """Bug 2 (frok round 2): graph_compiler._is_reachable_from_event must
+    recursively inspect transform-node inputs — not just the immediate source.
+
+    Without the fix, a math node fed by Transfer-amount was incorrectly
+    considered reachable in a Deposit handler because the graph_compiler only
+    checked the math node's type (transform → always reachable) without
+    inspecting what was wired into it.
+    """
+
+    def _agg_entity_node(self, node_id, name, fields=None):
+        return {
+            "id": node_id,
+            "type": "aggregateentity",
+            "position": {"x": 400, "y": 0},
+            "data": {
+                "name": name,
+                "fields": fields or [
+                    {"name": "id",    "type": "ID",     "required": True},
+                    {"name": "total", "type": "BigInt"},
+                ],
+                "triggerEvents": [],
+            },
+        }
+
+    def test_math_from_other_event_excluded_in_aggregate(self):
+        """A math node fed from Transfer-amount must NOT appear in the Deposit handler."""
+        agg_fields = [
+            {"name": "id",    "type": "ID",     "required": True},
+            {"name": "total", "type": "BigInt"},
+        ]
+        deposit_event = {"name": "Deposit", "signature": "Deposit(uint256)", "params": [
+            {"name": "value", "solidity_type": "uint256", "graph_type": "BigInt"},
+        ]}
+        transfer_event = {"name": "Transfer", "signature": "Transfer(uint256)", "params": [
+            {"name": "amount", "solidity_type": "uint256", "graph_type": "BigInt"},
+        ]}
+        nodes = [
+            _contract_node("c1", "Vault", events=[deposit_event, transfer_event]),
+            _math_node("m1"),
+            self._agg_entity_node("agg1", "Stats", agg_fields),
+        ]
+        edges = [
+            # Math LEFT input comes from Transfer-amount (wrong event for Deposit handler)
+            _edge("e1", "c1", "event-Transfer-amount", "m1", "left"),
+            # Math result wired to aggregate field-in-total
+            _edge("e2", "m1", "result", "agg1", "field-in-total"),
+            # Aggregate triggered by Deposit
+            _edge("e3", "c1", "event-Deposit", "agg1", "trigger"),
+        ]
+        cfg = _make_config(nodes, edges)
+        result = compile_graph(cfg)
+        # Find the Deposit handler
+        vault_src = result.get("Vault", "")
+        deposit_idx = vault_src.find("handleDeposit")
+        assert deposit_idx != -1, "Deposit handler not found"
+        deposit_block = vault_src[deposit_idx:]
+        # The math result from Transfer must NOT appear in Deposit handler
+        assert "event.params.amount" not in deposit_block, (
+            "Transfer-amount param leaked into Deposit handler through math node"
+        )
+
+    def test_implicit_port_through_math_always_reachable(self):
+        """block-number through a math node is reachable in any event handler."""
+        agg_fields = [
+            {"name": "id",        "type": "ID",     "required": True},
+            {"name": "lastBlock", "type": "BigInt"},
+        ]
+        deposit_event = {"name": "Deposit", "signature": "Deposit(uint256)", "params": [
+            {"name": "value", "solidity_type": "uint256", "graph_type": "BigInt"},
+        ]}
+        nodes = [
+            _contract_node("c1", "Vault", events=[deposit_event]),
+            _math_node("m1"),
+            self._agg_entity_node("agg1", "Stats", agg_fields),
+        ]
+        edges = [
+            # Math LEFT from an implicit port (always available)
+            _edge("e1", "c1", "implicit-block-number", "m1", "left"),
+            _edge("e2", "m1", "result", "agg1", "field-in-lastBlock"),
+            _edge("e3", "c1", "event-Deposit", "agg1", "trigger"),
+        ]
+        cfg = _make_config(nodes, edges)
+        result = compile_graph(cfg)
+        vault_src = result.get("Vault", "")
+        deposit_idx = vault_src.find("handleDeposit")
+        assert deposit_idx != -1
+        deposit_block = vault_src[deposit_idx:]
+        # block.number should appear (the implicit port flows through the math node)
+        assert "block.number" in deposit_block

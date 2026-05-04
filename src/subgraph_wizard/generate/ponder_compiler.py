@@ -48,11 +48,6 @@ def _event_param_expr_ts(port_id: str) -> str:
       implicit-tx-hash      → event.transaction.hash
     """
     if port_id.startswith("implicit-"):
-        # Normalize: implicit-instance-address is semantically identical to
-        # implicit-address (both resolve to the log-emitting contract address).
-        # Canonicalise here so downstream code only needs to handle one form.
-        if port_id == "implicit-instance-address":
-            port_id = "implicit-address"
         rest = port_id[len("implicit-"):]
         mapping = {
             "address":         "event.log.address",
@@ -445,6 +440,12 @@ class PonderCompiler:
         }
 
         # ── Preamble: resolve dependency statements ──
+        # This pass calls _resolve_value_ts for every field wire purely to emit
+        # ContractRead / Math variable declarations *before* the insert call.
+        # The values_lines pass below calls _resolve_value_ts again for the same
+        # handles, but declared_vars ensures no statement is emitted twice — only
+        # the expression string is returned on the second call.  The apparent
+        # double-resolution is intentional and harmless.
         for fld in fields:
             fname = field_name = fld.get("name", "")
             if not fname or fname == "id" or fld.get("derivedFrom"):
@@ -660,6 +661,14 @@ class PonderCompiler:
         ]
 
         # ── Preamble: resolve dependency statements ──
+        # This first pass intentionally calls _resolve_value_ts for every
+        # field-in wire before building the .values({}) object.  The goal is to
+        # emit ContractRead / Math variable declarations *before* the
+        # context.db.insert() call so they are in scope for both the initial
+        # .values({}) block and the .onConflictDoUpdate() callback.
+        # declared_vars deduplicates: if _resolve_value_ts is called again for
+        # the same (node, handle) in the passes below, it returns the same
+        # expression and emits zero additional statements — no work is doubled.
         for fld in non_id_fields:
             fname = fld["name"]
             in_handle = f"field-in-{fname}"
@@ -676,7 +685,7 @@ class PonderCompiler:
                 contract_type=contract_type,
                 contract_id=contract_id,
                 declared_vars=declared_vars,
-                row_mode=False,       # for dep stmts, doesn't matter — just collecting side-effects
+                row_mode=False,
                 row_entity_name=entity_name,
             )
             lines.extend(dep_stmts)
@@ -769,11 +778,11 @@ class PonderCompiler:
         if not update_values:
             # No field-in wires — just do a plain insert that ignores conflicts
             lines.append(f"await context.db.insert({var_name}).values({{ {initial_str} }})")
-            lines.append("  .onConflictDoNothing();")
+            lines.append(".onConflictDoNothing();")
         else:
             update_str = ", ".join(update_values)
             lines.append(f"await context.db.insert({var_name}).values({{ {initial_str} }})")
-            lines.append(f"  .onConflictDoUpdate((row) => ({{ {update_str} }}));")
+            lines.append(f".onConflictDoUpdate((row) => ({{ {update_str} }}));")
         lines.append("")
 
         return lines, used_entities, extra_abi_imports
@@ -831,15 +840,38 @@ class PonderCompiler:
             # normally reference event.log.address / event.block.number etc. must
             # be replaced with safe compile-time values.
             if is_setup and source_handle.startswith("implicit-"):
-                # Normalise implicit-instance-address → implicit-address
-                _sh = "implicit-address" if source_handle == "implicit-instance-address" else source_handle
-                if _sh == "implicit-address":
-                    # Use the per-instance loop variable so each instance gets its
-                    # own address when the handler iterates over all instances.
+                # In setup handlers there is no event object.  Both implicit-address
+                # (the log-emitting proxy) and implicit-instance-address (the
+                # configured deployment address) are replaced with the per-instance
+                # loop variable __address so each iteration uses its own address.
+                if source_handle in ("implicit-address", "implicit-instance-address"):
                     return ("__address", [], set())
-                source_handle = _sh
                 # block-number, block-timestamp, tx-hash have no equivalent in setup
                 return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
+
+            # ── implicit-instance-address: configured deployment address ─────
+            # This is semantically different from implicit-address
+            # (event.log.address).  implicit-address is the proxy address that
+            # *emitted* the log; implicit-instance-address is the deployment
+            # address configured on the Networks panel — for proxy contracts
+            # these differ.  We return the literal from the Networks panel so
+            # the handler references the correct implementation address.
+            if source_handle == "implicit-instance-address":
+                ct_name = data.get("name", contract_type)
+                addr = data.get("address", "").strip()
+                if not addr:
+                    instances = data.get("instances", [])
+                    addr = instances[0].get("address", "") if instances else ""
+                if not addr:
+                    addr = self._network_address_by_type.get(ct_name, "")
+                if addr:
+                    return (f'"{addr}" as `0x${{string}}`', [], set())
+                logger.warning(
+                    "implicit-instance-address used for %s but no address is "
+                    "configured; falling back to event.log.address",
+                    ct_name,
+                )
+                return ("event.log.address", [], set())
 
             if source_handle.startswith("event-") or source_handle.startswith("implicit-"):
                 expr = _event_param_expr_ts(source_handle)

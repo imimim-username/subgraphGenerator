@@ -568,44 +568,81 @@ class GraphCompiler:
         source_handle: str,
         contract_id: str,
         event_name: str,
+        _visited: frozenset[tuple[str, str]] | None = None,
     ) -> bool:
-        """Return True if (source_node_id, source_handle) is reachable from or
-        is compatible with the given event context.
+        """Return True if (source_node, source_handle) is reachable from the
+        current event without crossing a different event's trigger port.
 
-        A field-in wire is "reachable" when its source is NOT an event-param
-        port that belongs to a *different* event on the same (or another)
-        contract node.  Sources that are implicit ports, math/typecast/etc.
-        intermediate nodes, or ContractRead outputs are always considered
-        reachable (they don't carry event-specific param names).
+        The check is recursive: for transform nodes (math, typecast, etc.) we
+        inspect every upstream input edge.  If *any* ancestor resolves to a
+        contract port whose event name differs from ``event_name``, the whole
+        subtree is considered unreachable for this event.
 
-        The check is intentionally conservative: we only skip wires whose
-        immediate source handle names a concrete event param from a different
-        event.  Transitive upstream dependencies through transform nodes are not
-        inspected — those nodes read from whatever is wired into them, which may
-        itself already be event-specific.
+        A visited set guards against cycles in the graph.
         """
+        if _visited is None:
+            _visited = frozenset()
+        key = (source_node_id, source_handle)
+        if key in _visited:
+            return True  # cycle — assume reachable to avoid infinite recursion
+        _visited = _visited | {key}
+
         source_node = self._nodes.get(source_node_id)
         if not source_node:
             return True  # missing node — let the compiler emit a comment
 
         node_type = source_node.get("type", "")
 
+        # ── Contract node: check whether the port belongs to this event ───────
         if node_type == "contract":
-            # Event-param ports: "event-{EventName}-{paramName}"
-            if source_handle.startswith("event-") and not source_handle.startswith("implicit-"):
+            if source_handle.startswith("event-"):
                 parts = source_handle.split("-", 2)
-                if len(parts) >= 2:
-                    wired_event = parts[1]
-                    # If the port is for a different event, skip it in this handler
-                    if wired_event != event_name:
-                        return False
-            # implicit-* ports and read-* ports are always compatible
+                # parts[1] is the event name embedded in the port id
+                if len(parts) >= 2 and parts[1] != event_name:
+                    return False
+            # implicit-* ports (block, tx, address) are always available
             return True
 
-        # Transform nodes (math, typecast, strconcat, conditional, contractread)
-        # and aggregateentity prev/id ports are always considered reachable —
-        # they may themselves depend on event params, but we don't recurse here.
+        # ── Transform nodes: recurse into every input edge ────────────────────
+        if node_type in ("math", "typecast", "strconcat", "conditional", "contractread"):
+            for in_handle in self._transform_input_handles(source_node, source_handle):
+                in_edge = self._edge_by_target.get((source_node_id, in_handle))
+                if in_edge and not self._is_reachable_from_event(
+                    in_edge.source, in_edge.source_handle,
+                    contract_id, event_name, _visited,
+                ):
+                    return False
+
         return True
+
+    def _transform_input_handles(
+        self, node: dict[str, Any], source_handle: str
+    ) -> list[str]:
+        """Return the list of target-side input handles for a transform node.
+
+        Used by ``_is_reachable_from_event`` to walk the graph backwards.
+        """
+        t = node.get("type", "")
+        if t == "math":
+            return ["left", "right"]
+        if t == "typecast":
+            return ["value"]
+        if t == "strconcat":
+            return ["left", "right"]
+        if t == "conditional":
+            return ["condition", "value"]
+        if t == "contractread":
+            fn_index = node["data"].get("fnIndex", 0)
+            ref_id = node["data"].get("contractNodeId", "")
+            ref_node = self._nodes.get(ref_id)
+            if ref_node:
+                read_fns = ref_node["data"].get("readFunctions", [])
+                if fn_index < len(read_fns):
+                    fn = read_fns[fn_index]
+                    return ["bind-address"] + [
+                        f"in-{inp['name']}" for inp in fn.get("inputs", [])
+                    ]
+        return []
 
     def _compile_aggregate_entity_block(
         self,

@@ -543,42 +543,16 @@ class TestImplicitPorts:
         assert "event.block.number" in src
 
 
-# ── implicit-instance-address (multi-chain contract address) ──────────────────
+# ── implicit-instance-address (no broken JS subtraction expression) ───────────
 #
-# Bug: the compiler emitted `event.instance-address` (hyphen = subtraction in
-# JS/TS) which caused `ReferenceError: address is not defined` at runtime.
-# The correct expression is `event.log.address`.
+# Regression: the compiler used to emit `event.instance-address` (hyphen in TS
+# is the subtraction operator → ReferenceError: address is not defined).
+# The Bug 1 round-2 fix also changed the semantics: implicit-instance-address
+# now returns the *configured deployment address*, not event.log.address.
+# See TestImplicitInstanceAddress below for the full semantic tests.
 
-class TestImplicitInstanceAddress:
-    """Regression tests for the event.instance-address bug (GH: addr-subtraction)."""
-
-    def test_expr_fn_maps_instance_address_to_log_address(self):
-        """_event_param_expr_ts must return event.log.address, not event.instance-address."""
-        assert _event_param_expr_ts("implicit-instance-address") == "event.log.address"
-
-    def test_expr_fn_does_not_return_hyphenated_expression(self):
-        """The broken expression must never be produced."""
-        result = _event_param_expr_ts("implicit-instance-address")
-        assert "instance-address" not in result, (
-            f"Hyphenated expression would be parsed as subtraction: {result!r}"
-        )
-
-    def test_implicit_instance_address_wired_to_entity_field(self):
-        """Generator must emit event.log.address when instance-address port is wired to a field."""
-        fields = [
-            {"name": "id", "type": "ID", "required": True},
-            {"name": "contractAddr", "type": "String"},
-        ]
-        nodes = [
-            _contract("c1", "MYT", events=[_event("Submit")]),
-            _entity("e1", "Submission", fields=fields),
-        ]
-        edges = [
-            _edge("ed1", "c1", "event-Submit", "e1", "trigger"),
-            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-contractAddr"),
-        ]
-        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "event.log.address" in src
+class TestImplicitInstanceAddressNoSubtraction:
+    """Guard that the generated output never contains the broken `event.instance-address`."""
 
     def test_no_broken_subtraction_expression_in_entity_handler(self):
         """The broken `event.instance-address` expression must not appear in output."""
@@ -597,9 +571,8 @@ class TestImplicitInstanceAddress:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "event.instance-address" not in src
 
-    def test_implicit_instance_address_as_contractread_address(self):
-        """Regression: the exact crash scenario — instance-address used as readContract address."""
-        # This mirrors `MYT:Submit` calling totalAssets() with instance-address as `address`.
+    def test_implicit_instance_address_as_contractread_bind_address(self):
+        """Regression: instance-address wired as readContract bind address must not crash."""
         read_fn = _read_fn("totalAssets", inputs=[], outputs=[{"name": "", "type": "uint256"}])
         fields = [
             {"name": "id", "type": "ID", "required": True},
@@ -613,18 +586,11 @@ class TestImplicitInstanceAddress:
         edges = [
             _edge("ed1", "c1", "event-Submit", "e1", "trigger"),
             _edge("ed2", "cr1", "out-result", "e1", "field-total"),
-            # Wire instance-address as the bind-address for the contractread
             _edge("ed3", "c1", "implicit-instance-address", "cr1", "bind-address"),
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "event.log.address" in src
         assert "event.instance-address" not in src
-        # Must be valid: no bare `address` subtraction
         assert "instance - address" not in src
-
-    def test_same_result_as_implicit_address(self):
-        """implicit-instance-address and implicit-address should both resolve to event.log.address."""
-        assert _event_param_expr_ts("implicit-address") == _event_param_expr_ts("implicit-instance-address")
 
 
 # ── Auto chain field ───────────────────────────────────────────────────────────
@@ -1188,21 +1154,36 @@ class TestReachableFromEvent:
         assert "event.block.number" in deposit_block
 
 
-# ── Bug 13: implicit-instance-address normalisation ───────────────────────────
+# ── Bug 13 (corrected): implicit-instance-address semantics ─────────────────
+# implicit-address    → event.log.address  (proxy / log-emitting address)
+# implicit-instance-address → configured deployment address from Networks panel
+# These are DIFFERENT for proxy contracts — frok's second round of feedback.
 
 class TestImplicitInstanceAddress:
-    """Bug 13: implicit-instance-address and implicit-address must be identical."""
+    """implicit-instance-address must return the configured deployment address,
+    NOT event.log.address.  implicit-address remains event.log.address."""
 
-    def test_implicit_instance_address_maps_same_as_implicit_address(self):
-        """Both port IDs must produce event.log.address."""
+    def test_implicit_address_still_maps_to_event_log_address(self):
+        """implicit-address is unchanged: event.log.address."""
         assert _event_param_expr_ts("implicit-address") == "event.log.address"
-        assert _event_param_expr_ts("implicit-instance-address") == "event.log.address"
 
-    def test_entity_field_via_implicit_instance_address(self):
-        """Wiring implicit-instance-address to a field produces event.log.address in output."""
+    def test_implicit_instance_address_does_NOT_map_to_event_log_address_via_helper(self):
+        """_event_param_expr_ts is never the right place to resolve
+        implicit-instance-address — _resolve_value_ts intercepts it first.
+        After the Bug 1 fix the helper falls through to a generic fallback
+        (not event.log.address), confirming the normalization was removed."""
+        result = _event_param_expr_ts("implicit-instance-address")
+        assert result != "event.log.address", (
+            "implicit-instance-address must NOT be normalised to implicit-address "
+            "in _event_param_expr_ts — the resolution belongs in _resolve_value_ts."
+        )
+
+    def test_entity_field_via_implicit_instance_address_no_configured_addr_falls_back(self):
+        """With no configured address, implicit-instance-address falls back to
+        event.log.address (and a warning is logged)."""
         fields = [
-            {"name": "id",       "type": "ID",      "required": True},
-            {"name": "emitter",  "type": "Address"},
+            {"name": "id",      "type": "ID",      "required": True},
+            {"name": "emitter", "type": "Address"},
         ]
         nodes = [
             _contract("c1", "Token", events=[_event("Transfer")]),
@@ -1213,7 +1194,47 @@ class TestImplicitInstanceAddress:
             _edge("ed2", "c1", "implicit-instance-address", "e1", "field-emitter"),
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # fallback when no address configured
         assert "event.log.address" in src
+
+    def test_entity_field_via_implicit_instance_address_uses_configured_addr(self):
+        """When an address IS configured, implicit-instance-address should emit
+        that literal address, NOT event.log.address."""
+        fields = [
+            {"name": "id",      "type": "ID",      "required": True},
+            {"name": "emitter", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")], address="0xFEED"),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-emitter"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "0xFEED" in src
+        assert "event.log.address" not in src  # must NOT be the log-emitting address
+
+    def test_implicit_address_and_instance_address_different_with_configured_addr(self):
+        """The two ports must produce DIFFERENT output when an address is configured."""
+        # implicit-address → event.log.address
+        # implicit-instance-address → literal "0xDEAD"
+        fields = [{"name": "id", "type": "ID", "required": True},
+                  {"name": "a", "type": "Address"},
+                  {"name": "b", "type": "Address"}]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")], address="0xDEAD"),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Transfer",          "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-address",          "e1", "field-a"),
+            _edge("ed3", "c1", "implicit-instance-address", "e1", "field-b"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src   # implicit-address
+        assert "0xDEAD" in src              # implicit-instance-address
 
 
 # ── Bug 14: values_lines indentation consistency ──────────────────────────────
@@ -1276,3 +1297,179 @@ class TestBigDecimalZero:
         assert bd_zero.startswith('"') or bd_zero.startswith("'"), (
             f"BigDecimal zero should be a quoted string, got: {bd_zero!r}"
         )
+
+
+# ── Bug 1 (round 2): implicit-instance-address returns configured address ─────
+
+class TestImplicitInstanceAddressSemantics:
+    """Bug 1 (frok round 2): implicit-instance-address in non-setup handlers must
+    return the configured deployment address literal, NOT event.log.address.
+    implicit-address stays as event.log.address (proxy address)."""
+
+    def test_uses_configured_address_when_available(self):
+        """When a deployment address is set on the contract node,
+        implicit-instance-address must emit that literal."""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "deployed", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", events=[_event("Deposit")], address="0xC0FFEE"),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Deposit",            "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "0xC0FFEE" in src
+        assert "event.log.address" not in src
+
+    def test_implicit_address_is_unchanged_event_log_address(self):
+        """implicit-address (proxy address) is still event.log.address after the fix."""
+        fields = [
+            {"name": "id",   "type": "ID",      "required": True},
+            {"name": "from", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", events=[_event("Deposit")], address="0xC0FFEE"),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Deposit",   "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-address", "e1", "field-from"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src
+
+    def test_uses_instance_address_from_networks_panel(self):
+        """Address configured via Networks panel (network_address_by_type) is also used."""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "deployed", "type": "Address"},
+        ]
+        nodes = [
+            # No address on the node itself
+            _contract("c1", "Vault", events=[_event("Deposit")]),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Deposit",            "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
+        ]
+        # Supply address via networks panel only
+        networks = [
+            {"network": "mainnet", "contracts": {"Vault": {"instances": [{"address": "0xNETWORK", "startBlock": 1}]}}},
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
+        assert "0xNETWORK" in src
+        assert "event.log.address" not in src
+
+    def test_fallback_to_event_log_address_when_no_address(self):
+        """When no address is configured anywhere, falls back to event.log.address."""
+        fields = [
+            {"name": "id",       "type": "ID",      "required": True},
+            {"name": "deployed", "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", events=[_event("Deposit")]),  # no address
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-Deposit",            "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-instance-address", "e1", "field-deployed"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.log.address" in src  # graceful fallback
+
+    def test_setup_handler_both_address_ports_use_loop_var(self):
+        """In setup handlers, both implicit-address and implicit-instance-address
+        must resolve to the loop variable __address (not event.log.address)."""
+        fields = [
+            {"name": "id",   "type": "ID",      "required": True},
+            {"name": "a",    "type": "Address"},
+            {"name": "b",    "type": "Address"},
+        ]
+        nodes = [
+            _contract("c1", "Vault", hasSetupHandler=True, address="0xBEEF"),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-setup",             "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-address",          "e1", "field-a"),
+            _edge("ed3", "c1", "implicit-instance-address", "e1", "field-b"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        setup_idx = src.index('ponder.on("Vault:setup"')
+        setup_block = src[setup_idx:]
+        assert "event.log.address" not in setup_block
+        assert "__address" in setup_block
+
+
+# ── Bug 6: onConflict method indentation ────────────────────────────────────
+
+class TestOnConflictIndentation:
+    """Bug 6: .onConflictDoNothing() / .onConflictDoUpdate() must have no extra
+    leading spaces relative to the await ... line — indentation is added uniformly
+    by the body-indent pass (textwrap.indent)."""
+
+    def test_on_conflict_do_nothing_no_extra_leading_spaces(self):
+        """The lines list entry for .onConflictDoNothing() must NOT start with spaces.
+        To reach the onConflictDoNothing path the aggregate must have a 'chain' field
+        (so auto-chain injection is skipped) and no field-in wires."""
+        agg = _agg_entity("a1", "Counter", fields=[
+            {"name": "id",    "type": "ID",     "required": True},
+            {"name": "chain", "type": "String"},  # user owns chain → no auto update_values
+        ])
+        agg["data"]["triggerEvents"] = [{"contractId": "c1", "eventName": "Transfer"}]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer")]),
+            agg,
+        ]
+        # No field-in wires (chain is user-owned, no other non-id fields) → onConflictDoNothing
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert ".onConflictDoNothing();" in src, (
+            "Expected onConflictDoNothing path — check entity field configuration"
+        )
+        for line in src.splitlines():
+            if ".onConflictDoNothing();" in line:
+                method_indent = len(line) - len(line.lstrip())
+                lines = src.splitlines()
+                idx = lines.index(line)
+                await_line = lines[idx - 1]
+                await_indent = len(await_line) - len(await_line.lstrip())
+                assert method_indent == await_indent, (
+                    f"Indentation mismatch: '.onConflictDoNothing()' has {method_indent} spaces, "
+                    f"'await' line has {await_indent} spaces"
+                )
+                break
+
+    def test_on_conflict_do_update_no_extra_leading_spaces(self):
+        """The lines list entry for .onConflictDoUpdate() must NOT have extra leading spaces."""
+        agg = _agg_entity("a1", "Counter", fields=[
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "total", "type": "BigInt"},
+        ])
+        agg["data"]["triggerEvents"] = [{"contractId": "c1", "eventName": "Transfer"}]
+        nodes = [
+            _contract("c1", "Token", events=[_event("Transfer", [{"name": "value", "type": "uint256"}])]),
+            agg,
+        ]
+        # Wire a field-in to trigger onConflictDoUpdate path
+        edges = [
+            _edge("e1", "c1", "event-Transfer-value", "a1", "field-in-total"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert ".onConflictDoUpdate(" in src
+        for line in src.splitlines():
+            if ".onConflictDoUpdate(" in line:
+                method_indent = len(line) - len(line.lstrip())
+                lines = src.splitlines()
+                idx = lines.index(line)
+                await_line = lines[idx - 1]
+                await_indent = len(await_line) - len(await_line.lstrip())
+                assert method_indent == await_indent, (
+                    f"Indentation mismatch: '.onConflictDoUpdate()' has {method_indent} spaces, "
+                    f"'await' line has {await_indent} spaces"
+                )
+                break
