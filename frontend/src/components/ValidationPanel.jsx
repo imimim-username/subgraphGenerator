@@ -44,7 +44,7 @@ export function ValidationPanel({ issues = [], hasErrors, isValidating, onIssueC
       style={{
         position: 'absolute',
         bottom: 16,
-        left: 16,
+        left: 56,
         zIndex: 20,
         width: collapsed ? 'auto' : 320,
         background: '#0f172a',
