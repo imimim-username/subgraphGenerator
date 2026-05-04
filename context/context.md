@@ -577,8 +577,8 @@ cd frontend && npm run build
 ## Git / Deployment
 
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
-- Branch: `main`
-- Push command: `git push`
+- Active branch: `frokfixes` (bug-fix + UI polish; not yet merged to `main`)
+- Push command: `git push origin frokfixes`
 
 ---
 
@@ -594,6 +594,98 @@ The **Generate** button opens a modal (`frontend/src/components/GenerateModal.js
 
 `ponderSettings` state lives in `App.jsx` and is persisted in `visual-config.json` as
 `ponder_settings`. It is passed into `buildPayload()` so the server receives it on generate.
+
+---
+
+## Known Design Limitations / Future Work
+
+### Conditional + ContractRead = unconditional RPC call
+
+**Severity:** Low — only hits specific canvas topologies.
+
+When a `Conditional` node gates a `ContractRead`, the ponder compiler's preamble approach
+means the `readContract` call fires **before** the ternary guard. If the condition is false
+but the read arguments are invalid for that branch (e.g. they depend on event params that
+only make sense when the condition is true), the handler crashes.
+
+**Example:** Conditional checks `event.args.amount > 0`, ContractRead uses `event.args.token`
+as an argument — but `token` is the zero-address when `amount == 0`, causing an RPC revert.
+
+**Alternatives considered** (both have downsides):
+- Inline everything inside the ternary — complex codegen, hard to read output
+- Wrap reads in `try/catch` — silently swallows real errors
+
+Not a simple fix. Architectural tradeoff to revisit if user demand warrants it.
+
+---
+
+## Recent Changes (2026-05-03)
+
+### Bug fixes (frok review round 2)
+
+**Bug 1 — `implicit-instance-address` resolved to wrong value in Ponder**
+
+`_event_param_expr_ts` was incorrectly normalising `implicit-instance-address` → `implicit-address`,
+causing it to emit `event.log.address` (the runtime firing address) instead of the statically
+configured deployment address from the Networks panel. Fixed in `ponder_compiler.py`:
+
+- Removed the wrong normalisation line.
+- `_resolve_value_ts` now looks up the configured address from node data / instances / network
+  address map and returns it as a typed string literal (`"0x..." as \`0x${string}\``).
+- In setup handlers (no event param) both `implicit-address` and `implicit-instance-address`
+  map to the loop variable `__address` (unchanged — correct for that context).
+- Falls back to `event.log.address` with a warning log if no address is configured.
+
+**Bug 2 — `_is_reachable_from_event` non-recursive in `graph_compiler.py`**
+
+The Graph compiler's `_is_reachable_from_event` only checked one level of indirection, so a
+Math node fed by a wrong-event port appeared reachable when it wasn't. Fixed by rewriting as a
+recursive DFS with a visited-set guard (mirrors the fix already applied to `ponder_compiler.py`
+in round 1). Added `_transform_input_handles()` helper method to both compilers.
+
+**Bug 3 — Aggregate upsert double-resolution comment**
+
+`_compile_aggregate_upsert` calls `_resolve_value_ts` twice per field (first pass emits
+`const` declarations, second pass returns the expression). Added clarifying comment so future
+readers don't mistake the second pass for a bug.
+
+**Bug 4 — Entity insert preamble double-resolution comment**
+
+Same pattern as Bug 3 in `_compile_entity_insert`. Added the same clarifying comment.
+
+**Bug 5 — `index()` export from `"ponder"` verified**
+
+Concern that `index()` might not be exported from the Ponder main entry. Confirmed via web
+search and Uniswap's The Compact indexer:
+`import { index, onchainTable, primaryKey, relations } from "ponder"`. No code change needed.
+
+**Bug 6 — `.onConflictDoNothing()` extra leading spaces**
+
+In `ponder_compiler.py`, the `.onConflictDoNothing()` and `.onConflictDoUpdate(...)` calls had
+two extra leading spaces vs the `await` line above. Removed the extra indent.
+
+### UI fixes
+
+**Contract navigator in Toolbar**
+
+The left toolbar now lists all Contract nodes on the canvas (below a "Contracts" section
+divider) with a MapPin icon. Clicking a contract name zooms the canvas to that node
+(`reactFlowInstance.setCenter` + `duration: 400`).
+
+The toolbar container was given `maxHeight: calc(100vh - 80px)` and `overflowY: auto` so the
+Contracts list (which appears last) is always accessible by scrolling rather than overflowing
+off-screen.
+
+**ValidationPanel offset**
+
+`ValidationPanel` was positioned at `left: 16`, overlapping the React Flow Controls (zoom
+buttons) which are also at the bottom-left. Changed to `left: 56` to clear the Controls width.
+
+**React Flow Controls high-contrast styling**
+
+Overrode `.react-flow__controls-button` CSS (with `!important` to beat the xyflow stylesheet)
+so zoom buttons show **white icons on a near-black background** with a visible slate border
+and a blue hover state. Previously the icons were nearly invisible.
 
 ---
 
