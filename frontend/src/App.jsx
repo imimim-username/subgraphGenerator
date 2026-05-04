@@ -874,7 +874,7 @@ export default function App() {
         maxZoom={2}
       >
         <Background color="#1e293b" gap={24} size={1} />
-        <Controls style={{ background: '#1e293b', border: '1px solid #334155', color: '#e2e8f0' }} />
+        <Controls />
         <MiniMap
           style={{ background: '#1e293b', border: '1px solid #334155' }}
           nodeColor="#334155"
