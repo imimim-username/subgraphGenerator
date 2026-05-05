@@ -13,6 +13,9 @@ automatically.
 
 ## Quick start
 
+> **Requires Python 3.10 or newer.** Run `python --version` to check.
+> Installing on Python 3.9 or older will fail during dependency resolution.
+
 ```bash
 # Create and activate a virtual environment (recommended)
 python -m venv venv
