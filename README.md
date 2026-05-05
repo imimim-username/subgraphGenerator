@@ -18,9 +18,19 @@ automatically.
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
-pip install -e .
+# Install with hash-verified dependencies (recommended — supply-chain safe)
+pip install --require-hashes -r requirements.txt
+pip install -e . --no-deps   # link local source; all deps already installed above
+
 subgraph-wizard --ui      # opens http://localhost:5173
 ```
+
+> **`pip install -e .` vs `--require-hashes`**
+> `pip install -e .` reads `pyproject.toml` floor bounds (`>=`) and resolves
+> whatever is current on PyPI — no hash verification.  The two-step form above
+> installs every dependency from the hash-verified lockfile first, then links
+> the local source tree without pulling any additional packages (`--no-deps`).
+> Use the two-step form whenever supply-chain integrity matters.
 
 The canvas opens in your browser. From there:
 
@@ -320,8 +330,11 @@ The FastAPI backend exposes these endpoints:
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
+# Install dependencies (hash-verified lockfile) then link local source
+pip install --require-hashes -r requirements.txt
+pip install -e . --no-deps
+
 # Backend only (port 8000)
-pip install -e .
 uvicorn subgraph_wizard.server:app --port 8000 --reload
 
 # Frontend dev server (port 5173, proxies /api → :8000)
