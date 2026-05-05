@@ -6,7 +6,7 @@ the Ponder framework instead of AssemblyScript for The Graph.
 Key differences from AssemblyScript output:
   - Event params:    event.params.x     → event.args.x
   - Unique event ID: tx-hash + logIndex → event.id  (built-in)
-  - Block timestamp: event.block.timestamp → Number(event.block.timestamp)
+  - Block timestamp: event.block.timestamp → event.block.timestamp  (bigint, matches t.bigint())
   - Log address:     event.address      → event.log.address
   - Math operators:  .plus()/.minus()   → +, -, *, /, %, **
   - Entity insert:   new E(id) + save() → suffix-retry insert loop (avoids UniqueConstraintError)
@@ -44,7 +44,7 @@ def _event_param_expr_ts(port_id: str) -> str:
     Ponder differences vs AssemblyScript:
       event-Transfer-from   → event.args.from
       implicit-address      → event.log.address
-      implicit-block-timestamp → Number(event.block.timestamp)
+      implicit-block-timestamp → event.block.timestamp
       implicit-tx-hash      → event.transaction.hash
     """
     if port_id.startswith("implicit-"):
@@ -52,7 +52,7 @@ def _event_param_expr_ts(port_id: str) -> str:
         mapping = {
             "address":         "event.log.address",
             "block-number":    "event.block.number",
-            "block-timestamp": "Number(event.block.timestamp)",
+            "block-timestamp": "event.block.timestamp",
             "tx-hash":         "event.transaction.hash",
         }
         return mapping.get(rest, f"event.{rest}")

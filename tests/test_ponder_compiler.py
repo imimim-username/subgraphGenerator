@@ -180,7 +180,9 @@ class TestEntityInsert:
             _edge("ed2", "c1", "implicit-block-timestamp", "e1", "field-ts"),
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert "Number(event.block.timestamp)" in src
+        # timestamp is already bigint — no Number() coercion needed
+        assert "event.block.timestamp" in src
+        assert "Number(event.block.timestamp)" not in src
 
     def test_implicit_tx_hash(self):
         fields = [
