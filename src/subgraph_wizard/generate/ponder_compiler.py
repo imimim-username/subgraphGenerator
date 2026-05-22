@@ -914,7 +914,28 @@ class PonderCompiler:
             # event.log.address which is chain- and instance-aware at runtime.
             if source_handle == "implicit-instance-address":
                 ct_name = data.get("name", contract_type)
-                return (self._instance_address_expr(ct_name), [], set())
+                addr_expr = self._instance_address_expr(ct_name)
+                # Cross-contract ambiguity guard: event.log.address is only
+                # correct when ct_name IS the handler's own contract (i.e. the
+                # firing instance's address).  If we're reading a *different*
+                # contract that has multiple instances per chain, event.log.address
+                # points at the wrong contract entirely and will silently revert at
+                # runtime.  Fail loudly here instead of generating broken code.
+                if addr_expr == "event.log.address" and ct_name != contract_type:
+                    raise ValueError(
+                        f"Ambiguous cross-contract read address: contract '{ct_name}' "
+                        f"has multiple instances on at least one chain, so its address "
+                        f"cannot be inferred from event.log.address inside a "
+                        f"'{contract_type}' event handler (event.log.address refers to "
+                        f"the firing '{contract_type}' instance, not any '{ct_name}' "
+                        f"instance). To fix: either (a) ensure '{ct_name}' has at most "
+                        f"one instance per chain so a chain-keyed ternary can be emitted, "
+                        f"or (b) remove the '{contract_type}' event from the aggregate "
+                        f"entity's trigger list if it should not drive a '{ct_name}' read, "
+                        f"or (c) wire an explicit address to the contractread's bind-address "
+                        f"port (e.g. from a prior lookup that returns the correct instance)."
+                    )
+                return (addr_expr, [], set())
 
             if source_handle.startswith("event-") or source_handle.startswith("implicit-"):
                 expr = _event_param_expr_ts(source_handle)
