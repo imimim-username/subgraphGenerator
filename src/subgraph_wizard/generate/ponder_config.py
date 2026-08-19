@@ -416,11 +416,14 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 # NOT inside a contract entry.  The source name MUST differ from the
                 # contract name (Ponder enforces uniqueness across blocks, contracts,
                 # and accounts).  We use "{ContractName}Block" as the convention.
+                # startBlock is included so the block handler doesn't fire before the
+                # contract is deployed (which would cause ABI decoding errors on reads).
                 block_source_name = f"{ct_name}Block"
+                blk_start = f"\n      startBlock: {start_block}," if start_block else ""
                 blocks_lines.append(
                     f"    {block_source_name}: {{\n"
                     f'      chain: "{chain_name}",\n'
-                    f"      interval: {block_interval},\n"
+                    f"      interval: {block_interval},{blk_start}\n"
                     f"    }},"
                 )
 
@@ -440,12 +443,24 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 # Source name uses "{ContractName}_{chainName}Block" to avoid
                 # the Ponder uniqueness constraint (names must be unique across
                 # blocks, contracts, and accounts).
+                # startBlock is included per-chain so the handler doesn't fire
+                # before the contract is deployed on that chain.
                 for chain_name_blk in chains_used:
                     source_name = f"{ct_name}_{chain_name_blk}Block"
+                    blk_chain_starts = [
+                        i["startBlock"]
+                        for i in instances_by_chain[chain_name_blk]
+                    ]
+                    blk_start_block = (
+                        0
+                        if any(s == 0 for s in blk_chain_starts)
+                        else min(blk_chain_starts)
+                    )
+                    blk_start = f"\n      startBlock: {blk_start_block}," if blk_start_block else ""
                     blocks_lines.append(
                         f"    {source_name}: {{\n"
                         f'      chain: "{chain_name_blk}",\n'
-                        f"      interval: {block_interval},\n"
+                        f"      interval: {block_interval},{blk_start}\n"
                         f"    }},"
                     )
 

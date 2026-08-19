@@ -1068,6 +1068,40 @@ class TestBlockHandler:
         # NOT inside contracts:, and no old inline form
         assert "block: { interval:" not in out
 
+    def test_block_source_includes_start_block(self):
+        """Block source includes startBlock so the handler doesn't fire before
+        the contract is deployed (avoids AbiDecodingZeroDataError on reads)."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst(startBlock=20_000_000)))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=10)],
+        ))
+        assert "  blocks: {" in out
+        assert "startBlock: 20000000" in out
+
+    def test_block_source_omits_start_block_when_zero(self):
+        """startBlock=0 means 'index from genesis' — the field is omitted (Ponder default)."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst(startBlock=0)))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=10)],
+        ))
+        # The blocks: section itself is present, but no startBlock field
+        assert "  blocks: {" in out
+        idx = out.index("TokenBlock: {")
+        block_section = out[idx: out.index("}", idx) + 1]
+        assert "startBlock" not in block_section
+
+    def test_block_interval_in_multichain_format_includes_start_block(self):
+        """Multi-chain: each block source includes the per-chain startBlock."""
+        out = render_ponder_config(_cfg(
+            networks=[
+                _net("mainnet",  {"Token": {"instances": [_inst("0xAAAA", 14_000_000)]}}),
+                _net("optimism", {"Token": {"instances": [_inst("0xBBBB",  1_000_000)]}}),
+            ],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50)],
+        ))
+        assert "startBlock: 14000000" in out
+        assert "startBlock: 1000000" in out
+
     def test_block_interval_default_one_when_not_set(self):
         """blockInterval absent → defaults to 1 in the blocks: section."""
         out = render_ponder_config(_cfg(
