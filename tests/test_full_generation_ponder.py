@@ -224,7 +224,8 @@ class TestSimpleERC20Transfer:
         assert "event.args.value" in src
 
     def test_handler_maps_timestamp(self, outputs):
-        assert "Number(event.block.timestamp)" in outputs["src/index.ts"]
+        # Timestamp is stored as BigInt natively — no Number() cast needed
+        assert "event.block.timestamp" in outputs["src/index.ts"]
 
     def test_handler_uses_event_id_for_entity_id(self, outputs):
         # Suffix-retry loop: raw id expr goes into __baseId; values() uses __id

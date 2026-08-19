@@ -1691,3 +1691,34 @@ class TestBlockHandler:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert "__baseId = event.id" in src
         assert "event.block.number.toString()" in src
+
+    def test_block_handler_multichain_emits_one_handler_per_chain(self):
+        """Multi-chain block handler emits one ponder.on per chain using
+        the '{ContractName}_{chainName}Block:block' source naming convention."""
+        networks = [
+            {"network": "mainnet",  "contracts": {"Oracle": {"instances": [{"address": "0xAAAA", "startBlock": 1}]}}},
+            {"network": "optimism", "contracts": {"Oracle": {"instances": [{"address": "0xBBBB", "startBlock": 1}]}}},
+        ]
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes, networks=networks))["src/index.ts"]
+        # One handler per chain, named {ContractName}_{chainName}Block
+        assert 'ponder.on("Oracle_mainnetBlock:block"' in src
+        assert 'ponder.on("Oracle_optimismBlock:block"' in src
+        # The plain single-chain source name must NOT appear (it would be a mismatch)
+        assert 'ponder.on("OracleBlock:block"' not in src
+
+    def test_block_handler_multichain_with_entity(self):
+        """Multi-chain block handler with a wired entity emits db inserts inside each handler."""
+        networks = [
+            {"network": "mainnet",  "contracts": {"Oracle": {"instances": [{"address": "0xAAAA", "startBlock": 1}]}}},
+            {"network": "optimism", "contracts": {"Oracle": {"instances": [{"address": "0xBBBB", "startBlock": 1}]}}},
+        ]
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snapshot"),
+        ]
+        edges = [_edge("ed1", "c1", "event-block", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges, networks=networks))["src/index.ts"]
+        assert 'ponder.on("Oracle_mainnetBlock:block"' in src
+        assert 'ponder.on("Oracle_optimismBlock:block"' in src
+        assert "snapshot" in src
