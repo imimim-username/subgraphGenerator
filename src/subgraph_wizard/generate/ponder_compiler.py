@@ -1272,8 +1272,14 @@ class PonderCompiler:
             out_entry = next(
                 (o for o in fn_outputs if o.get("name") == out_name), None
             )
+            # Treat the result as a tuple (access by field name) when:
+            #   a) the output is explicitly flagged as a struct component, OR
+            #   b) the function has multiple outputs — viem returns them as a
+            #      named array and we must access each field individually to
+            #      avoid passing the whole tuple where a scalar BigInt is expected.
             is_tuple_component = bool(
-                out_entry and out_entry.get("is_tuple_component")
+                (out_entry and out_entry.get("is_tuple_component"))
+                or len(fn_outputs) > 1
             )
 
             # Tuple components share a single readContract call keyed by the

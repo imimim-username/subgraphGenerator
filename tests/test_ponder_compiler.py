@@ -453,6 +453,52 @@ class TestContractRead:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert 'functionName: "balanceOf"' in src
 
+    def test_contractread_multi_output_accesses_named_fields(self):
+        """A function with multiple outputs (e.g. latestRoundData) must share one
+        readContract call and access individual fields by name (result.fieldName),
+        not pass the whole tuple as a scalar BigInt value.
+
+        Regression test for: 'Cannot convert A,B,C,D,E to a BigInt'
+        """
+        read_fn = _read_fn("latestRoundData", outputs=[
+            {"name": "roundId",         "solidity_type": "uint80",  "graph_type": "BigInt"},
+            {"name": "answer",          "solidity_type": "int256",  "graph_type": "BigInt"},
+            {"name": "startedAt",       "solidity_type": "uint256", "graph_type": "BigInt"},
+            {"name": "updatedAt",       "solidity_type": "uint256", "graph_type": "BigInt"},
+            {"name": "answeredInRound", "solidity_type": "uint80",  "graph_type": "BigInt"},
+        ])
+        fields = [
+            {"name": "id",              "type": "ID",     "required": True},
+            {"name": "roundId",         "type": "BigInt"},
+            {"name": "answer",          "type": "BigInt"},
+            {"name": "startedAt",       "type": "BigInt"},
+            {"name": "updatedAt",       "type": "BigInt"},
+            {"name": "answeredInRound", "type": "BigInt"},
+        ]
+        cr_node = {"id": "cr1", "type": "contractread", "position": {}, "data": {"contractNodeId": "c1", "fnIndex": 0}}
+        nodes = [
+            _contract("c1", "Oracle", events=[_event("Transfer")], read_fns=[read_fn]),
+            cr_node,
+            _entity("e1", "Snapshot", fields=fields),
+        ]
+        edges = [
+            _edge("ed0", "c1",  "event-Transfer",      "e1",  "trigger"),
+            _edge("ed1", "cr1", "out-roundId",         "e1",  "field-roundId"),
+            _edge("ed2", "cr1", "out-answer",          "e1",  "field-answer"),
+            _edge("ed3", "cr1", "out-startedAt",       "e1",  "field-startedAt"),
+            _edge("ed4", "cr1", "out-updatedAt",       "e1",  "field-updatedAt"),
+            _edge("ed5", "cr1", "out-answeredInRound", "e1",  "field-answeredInRound"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        # One shared readContract call, not five separate ones
+        assert src.count('functionName: "latestRoundData"') == 1
+        # Each field accessed by name on the result object
+        assert ".roundId"          in src
+        assert ".answer"           in src
+        assert ".startedAt"        in src
+        assert ".updatedAt"        in src
+        assert ".answeredInRound"  in src
+
 
 # ── Aggregate entity ───────────────────────────────────────────────────────────
 
