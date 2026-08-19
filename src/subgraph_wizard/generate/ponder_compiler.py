@@ -281,24 +281,55 @@ class PonderCompiler:
             # Ponder fires this on every Nth block (interval set in ponder.config.ts).
             # Unlike event handlers, block handlers have no event.args or event.log —
             # only event.block (number, timestamp, hash) is available.
+            #
+            # The block source name used in ponder.on() must match the key in the
+            # top-level `blocks:` section of ponder.config.ts:
+            #   - Single-chain: source name = contract name  → "{ContractName}:block"
+            #   - Multi-chain:  one source per chain         → "{ContractName}_{chainName}:block"
             if data.get("hasBlockHandler"):
-                block, used_entities, used_abis = self._compile_handler(
-                    contract_node=contract_node,
-                    event={"name": "block", "params": []},
-                )
-                if block:
-                    handler_blocks.append(block)
-                    entity_names_needed.update(used_entities)
-                    abi_imports_needed.update(used_abis)
+                chains_for_ct = list(self._instances_by_chain.get(contract_type, {}).keys())
+                is_multi_chain = len(chains_for_ct) > 1
+
+                if is_multi_chain:
+                    # Emit one handler per chain, using the {ContractName}_{chainName} source name
+                    for chain_name in chains_for_ct:
+                        source_name = f"{contract_type}_{chain_name}"
+                        block, used_entities, used_abis = self._compile_handler(
+                            contract_node=contract_node,
+                            event={"name": "block", "params": []},
+                            source_name_override=source_name,
+                        )
+                        if block:
+                            handler_blocks.append(block)
+                            entity_names_needed.update(used_entities)
+                            abi_imports_needed.update(used_abis)
+                        else:
+                            abi_imports_needed.add(contract_type)
+                            handler_blocks.append(
+                                f'ponder.on("{source_name}:block", async ({{ event, context }}) => {{\n'
+                                f"  // TODO: read oracle/contract data and store a snapshot\n"
+                                f"  // Available: event.block.number, event.block.timestamp, event.block.hash\n"
+                                f"}});\n"
+                            )
                 else:
-                    # No entities wired — emit a stub guiding the user.
-                    abi_imports_needed.add(contract_type)
-                    handler_blocks.append(
-                        f'ponder.on("{contract_type}:block", async ({{ event, context }}) => {{\n'
-                        f"  // TODO: read oracle/contract data and store a snapshot\n"
-                        f"  // Available: event.block.number, event.block.timestamp, event.block.hash\n"
-                        f"}});\n"
+                    # Single-chain: source name == contract name
+                    block, used_entities, used_abis = self._compile_handler(
+                        contract_node=contract_node,
+                        event={"name": "block", "params": []},
                     )
+                    if block:
+                        handler_blocks.append(block)
+                        entity_names_needed.update(used_entities)
+                        abi_imports_needed.update(used_abis)
+                    else:
+                        # No entities wired — emit a stub guiding the user.
+                        abi_imports_needed.add(contract_type)
+                        handler_blocks.append(
+                            f'ponder.on("{contract_type}:block", async ({{ event, context }}) => {{\n'
+                            f"  // TODO: read oracle/contract data and store a snapshot\n"
+                            f"  // Available: event.block.number, event.block.timestamp, event.block.hash\n"
+                            f"}});\n"
+                        )
 
         # ── Assemble imports ──
         lines: list[str] = ['import { ponder } from "ponder:registry";']
@@ -324,8 +355,14 @@ class PonderCompiler:
         self,
         contract_node: dict[str, Any],
         event: dict[str, Any],
+        source_name_override: str | None = None,
     ) -> tuple[str | None, set[str], set[str]]:
         """Compile one ponder.on handler block.
+
+        Args:
+            source_name_override: When set, use this as the ponder.on source name
+                instead of the contract type name.  Used for multi-chain block handlers
+                where the source is named ``{ContractName}_{chainName}``.
 
         Returns:
             (block_source | None, entity_names_used, abi_names_used)
@@ -337,6 +374,7 @@ class PonderCompiler:
         event_port_id = f"event-{event_name}"
         contract_id = contract_node["id"]
         contract_type = contract_node["data"]["name"]
+        handler_source_name = source_name_override or contract_type
 
         # ── Find all entity nodes wired to this event ──
         all_entities: dict[str, dict[str, Any]] = {}
@@ -438,7 +476,7 @@ class PonderCompiler:
             body = textwrap.indent("\n".join(body_lines), "  ")
 
         block = (
-            f'ponder.on("{contract_type}:{event_name}", '
+            f'ponder.on("{handler_source_name}:{event_name}", '
             f'async ({params}) => {{\n'
             f"{body}\n"
             f"}});\n"

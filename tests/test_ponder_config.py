@@ -1055,50 +1055,59 @@ class TestAutoChainColumn:
 
 class TestBlockHandler:
     def test_block_interval_emitted_when_enabled(self):
+        """Block source appears in top-level blocks: section, not inside contracts:."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=100)],
         ))
-        assert "block: { interval: 100 }" in out
+        # blocks: section with correct chain and interval
+        assert "  blocks: {" in out
+        assert "Token: {" in out
+        assert 'chain: "mainnet"' in out
+        assert "interval: 100," in out
+        # NOT inside contracts:
+        assert "block: { interval:" not in out
 
     def test_block_interval_default_one_when_not_set(self):
-        """blockInterval absent → defaults to 1."""
+        """blockInterval absent → defaults to 1 in the blocks: section."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True)],
         ))
-        assert "block: { interval: 1 }" in out
+        assert "  blocks: {" in out
+        assert "interval: 1," in out
 
     def test_block_not_emitted_when_disabled(self):
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=False)],
         ))
-        assert "block:" not in out
+        assert "blocks:" not in out
 
     def test_block_not_emitted_when_flag_absent(self):
-        """No hasBlockHandler key in node data → no block: field."""
+        """No hasBlockHandler key in node data → no blocks: section."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token")],
         ))
-        assert "block:" not in out
+        assert "blocks:" not in out
 
     def test_block_not_emitted_when_no_node(self):
-        """No contract node at all → no block: field."""
+        """No contract node at all → no blocks: section."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
         ))
-        assert "block:" not in out
+        assert "blocks:" not in out
 
     def test_block_with_other_per_contract_flags(self):
-        """block: and includeCallTraces can coexist in the same contract entry."""
+        """blocks: section and includeCallTraces in the contract entry can coexist."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50,
                                   includeCallTraces=True)],
         ))
-        assert "block: { interval: 50 }" in out
+        assert "  blocks: {" in out
+        assert "interval: 50," in out
         assert "includeCallTraces: true" in out
 
     def test_block_interval_string_coerced_to_int(self):
@@ -1107,7 +1116,8 @@ class TestBlockHandler:
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval="25")],
         ))
-        assert "block: { interval: 25 }" in out
+        assert "  blocks: {" in out
+        assert "interval: 25," in out
 
     def test_block_interval_zero_clamped_to_one(self):
         """blockInterval of 0 is clamped to 1 (minimum valid interval)."""
@@ -1115,7 +1125,8 @@ class TestBlockHandler:
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=0)],
         ))
-        assert "block: { interval: 1 }" in out
+        assert "  blocks: {" in out
+        assert "interval: 1," in out
 
     def test_block_interval_non_numeric_string_defaults_to_one(self):
         """Non-numeric blockInterval (e.g. corrupted save) is safely clamped to 1
@@ -1124,10 +1135,11 @@ class TestBlockHandler:
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval="abc")],
         ))
-        assert "block: { interval: 1 }" in out
+        assert "  blocks: {" in out
+        assert "interval: 1," in out
 
     def test_block_interval_in_multichain_format(self):
-        """block: { interval } must appear in the top-level fields of a multi-chain contract."""
+        """Multi-chain: one block source per chain named {ContractName}_{chainName}."""
         out = render_ponder_config(_cfg(
             networks=[
                 _net("mainnet",  {"Token": {"instances": [_inst("0xAAAA", 14_000_000)]}}),
@@ -1135,8 +1147,13 @@ class TestBlockHandler:
             ],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50)],
         ))
-        # block: must appear in the contract section
-        assert "block: { interval: 50 }" in out
-        # And the multi-chain format has both chain sub-entries
+        # Top-level blocks: section (not inside contracts:)
+        assert "  blocks: {" in out
+        assert "block: { interval:" not in out
+        # One source per chain with the {ContractName}_{chainName} naming convention
+        assert "Token_mainnet:" in out
+        assert "Token_optimism:" in out
+        assert "interval: 50," in out
+        # The contract entry itself still has both chains via multi-chain format
         assert "mainnet:" in out
         assert "optimism:" in out
