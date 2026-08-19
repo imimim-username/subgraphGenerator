@@ -413,10 +413,12 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 fields.append("includeTransactionReceipts: true")
             if has_block_handler:
                 # Ponder requires block sources in the top-level `blocks:` section,
-                # NOT inside a contract entry.  For a single-chain contract we use
-                # the contract name as the block-source name.
+                # NOT inside a contract entry.  The source name MUST differ from the
+                # contract name (Ponder enforces uniqueness across blocks, contracts,
+                # and accounts).  We use "{ContractName}Block" as the convention.
+                block_source_name = f"{ct_name}Block"
                 blocks_lines.append(
-                    f"    {ct_name}: {{\n"
+                    f"    {block_source_name}: {{\n"
                     f'      chain: "{chain_name}",\n'
                     f"      interval: {block_interval},\n"
                     f"    }},"
@@ -434,9 +436,12 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
             if include_tx_receipts:
                 top_fields.append("includeTransactionReceipts: true")
             if has_block_handler:
-                # Multi-chain: one block source per chain, named {ContractName}_{chainName}
+                # Multi-chain: one block source per chain.
+                # Source name uses "{ContractName}_{chainName}Block" to avoid
+                # the Ponder uniqueness constraint (names must be unique across
+                # blocks, contracts, and accounts).
                 for chain_name_blk in chains_used:
-                    source_name = f"{ct_name}_{chain_name_blk}"
+                    source_name = f"{ct_name}_{chain_name_blk}Block"
                     blocks_lines.append(
                         f"    {source_name}: {{\n"
                         f'      chain: "{chain_name_blk}",\n'

@@ -1548,7 +1548,7 @@ class TestBlockHandler:
     def test_block_handler_emitted_when_flag_set(self):
         nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
         src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
-        assert 'ponder.on("Oracle:block"' in src
+        assert 'ponder.on("OracleBlock:block"' in src
 
     def test_block_handler_not_emitted_when_flag_absent(self):
         nodes = [_contract("c1", "Oracle")]
@@ -1591,7 +1591,7 @@ class TestBlockHandler:
         ]
         edges = [_edge("ed1", "c1", "event-block", "e1", "trigger")]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
-        assert 'ponder.on("Oracle:block"' in src
+        assert 'ponder.on("OracleBlock:block"' in src
         # Ponder compiler uses the schema table ref (e.g. "snapshot" from ponder:schema)
         assert "snapshot" in src
 
@@ -1664,13 +1664,13 @@ class TestBlockHandler:
         ]
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert 'ponder.on("Oracle:AnswerUpdated"' in src
-        assert 'ponder.on("Oracle:block"' in src
+        assert 'ponder.on("OracleBlock:block"' in src
 
     def test_block_handler_uses_event_block_signature(self):
         """Block handler destructures { event, context } (not { context } like setup)."""
         nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
         src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
-        block_start = src.index('ponder.on("Oracle:block"')
+        block_start = src.index('ponder.on("OracleBlock:block"')
         block_snippet = src[block_start:block_start + 200]
         assert "{ event, context }" in block_snippet
 

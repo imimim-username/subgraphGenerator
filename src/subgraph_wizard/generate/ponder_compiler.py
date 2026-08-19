@@ -283,17 +283,19 @@ class PonderCompiler:
             # only event.block (number, timestamp, hash) is available.
             #
             # The block source name used in ponder.on() must match the key in the
-            # top-level `blocks:` section of ponder.config.ts:
-            #   - Single-chain: source name = contract name  → "{ContractName}:block"
-            #   - Multi-chain:  one source per chain         → "{ContractName}_{chainName}:block"
+            # top-level `blocks:` section of ponder.config.ts.  Ponder enforces
+            # uniqueness across blocks, contracts, and accounts, so the source name
+            # MUST differ from the contract name:
+            #   - Single-chain: "{ContractName}Block"              → "{ContractName}Block:block"
+            #   - Multi-chain:  "{ContractName}_{chainName}Block"  → one handler per chain
             if data.get("hasBlockHandler"):
                 chains_for_ct = list(self._instances_by_chain.get(contract_type, {}).keys())
                 is_multi_chain = len(chains_for_ct) > 1
 
                 if is_multi_chain:
-                    # Emit one handler per chain, using the {ContractName}_{chainName} source name
+                    # Emit one handler per chain
                     for chain_name in chains_for_ct:
-                        source_name = f"{contract_type}_{chain_name}"
+                        source_name = f"{contract_type}_{chain_name}Block"
                         block, used_entities, used_abis = self._compile_handler(
                             contract_node=contract_node,
                             event={"name": "block", "params": []},
@@ -312,10 +314,12 @@ class PonderCompiler:
                                 f"}});\n"
                             )
                 else:
-                    # Single-chain: source name == contract name
+                    # Single-chain: "{ContractName}Block" avoids name collision with the contract
+                    block_source_name = f"{contract_type}Block"
                     block, used_entities, used_abis = self._compile_handler(
                         contract_node=contract_node,
                         event={"name": "block", "params": []},
+                        source_name_override=block_source_name,
                     )
                     if block:
                         handler_blocks.append(block)
@@ -325,7 +329,7 @@ class PonderCompiler:
                         # No entities wired — emit a stub guiding the user.
                         abi_imports_needed.add(contract_type)
                         handler_blocks.append(
-                            f'ponder.on("{contract_type}:block", async ({{ event, context }}) => {{\n'
+                            f'ponder.on("{block_source_name}:block", async ({{ event, context }}) => {{\n'
                             f"  // TODO: read oracle/contract data and store a snapshot\n"
                             f"  // Available: event.block.number, event.block.timestamp, event.block.hash\n"
                             f"}});\n"

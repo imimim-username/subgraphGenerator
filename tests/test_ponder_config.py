@@ -1055,17 +1055,17 @@ class TestAutoChainColumn:
 
 class TestBlockHandler:
     def test_block_interval_emitted_when_enabled(self):
-        """Block source appears in top-level blocks: section, not inside contracts:."""
+        """Block source appears in top-level blocks: section with a unique name."""
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=100)],
         ))
-        # blocks: section with correct chain and interval
+        # blocks: section with "{ContractName}Block" source name
         assert "  blocks: {" in out
-        assert "Token: {" in out
+        assert "TokenBlock: {" in out
         assert 'chain: "mainnet"' in out
         assert "interval: 100," in out
-        # NOT inside contracts:
+        # NOT inside contracts:, and no old inline form
         assert "block: { interval:" not in out
 
     def test_block_interval_default_one_when_not_set(self):
@@ -1139,7 +1139,7 @@ class TestBlockHandler:
         assert "interval: 1," in out
 
     def test_block_interval_in_multichain_format(self):
-        """Multi-chain: one block source per chain named {ContractName}_{chainName}."""
+        """Multi-chain: one block source per chain named {ContractName}_{chainName}Block."""
         out = render_ponder_config(_cfg(
             networks=[
                 _net("mainnet",  {"Token": {"instances": [_inst("0xAAAA", 14_000_000)]}}),
@@ -1150,9 +1150,9 @@ class TestBlockHandler:
         # Top-level blocks: section (not inside contracts:)
         assert "  blocks: {" in out
         assert "block: { interval:" not in out
-        # One source per chain with the {ContractName}_{chainName} naming convention
-        assert "Token_mainnet:" in out
-        assert "Token_optimism:" in out
+        # One source per chain with the {ContractName}_{chainName}Block naming convention
+        assert "Token_mainnetBlock:" in out
+        assert "Token_optimismBlock:" in out
         assert "interval: 50," in out
         # The contract entry itself still has both chains via multi-chain format
         assert "mainnet:" in out
