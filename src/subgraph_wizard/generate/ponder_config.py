@@ -357,6 +357,11 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         nd = contract_node_data.get(ct_name, {})
         include_call_traces: bool = nd.get("includeCallTraces", False)
         include_tx_receipts: bool = nd.get("includeTransactionReceipts", False)
+        has_block_handler: bool = nd.get("hasBlockHandler", False)
+        try:
+            block_interval: int = max(1, int(nd.get("blockInterval") or 1))
+        except (ValueError, TypeError):
+            block_interval = 1
 
         # Sub-group by chain (preserving original order)
         instances_by_chain: dict[str, list[dict[str, Any]]] = {}
@@ -405,6 +410,8 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 fields.append("includeCallTraces: true")
             if include_tx_receipts:
                 fields.append("includeTransactionReceipts: true")
+            if has_block_handler:
+                fields.append(f"block: {{ interval: {block_interval} }}")
 
             inner = "".join(f"\n      {f}," for f in fields)
             contract_lines.append(f"    {ct_name}: {{{inner}\n    }},")
@@ -417,6 +424,8 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 top_fields.append("includeCallTraces: true")
             if include_tx_receipts:
                 top_fields.append("includeTransactionReceipts: true")
+            if has_block_handler:
+                top_fields.append(f"block: {{ interval: {block_interval} }}")
 
             # Per-chain sub-objects
             chain_obj_lines: list[str] = []

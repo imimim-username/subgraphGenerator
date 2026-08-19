@@ -277,6 +277,29 @@ class PonderCompiler:
                         f"}});\n"
                     )
 
+            # Block handler — emitted when hasBlockHandler is enabled on the contract node.
+            # Ponder fires this on every Nth block (interval set in ponder.config.ts).
+            # Unlike event handlers, block handlers have no event.args or event.log —
+            # only event.block (number, timestamp, hash) is available.
+            if data.get("hasBlockHandler"):
+                block, used_entities, used_abis = self._compile_handler(
+                    contract_node=contract_node,
+                    event={"name": "block", "params": []},
+                )
+                if block:
+                    handler_blocks.append(block)
+                    entity_names_needed.update(used_entities)
+                    abi_imports_needed.update(used_abis)
+                else:
+                    # No entities wired — emit a stub guiding the user.
+                    abi_imports_needed.add(contract_type)
+                    handler_blocks.append(
+                        f'ponder.on("{contract_type}:block", async ({{ event, context }}) => {{\n'
+                        f"  // TODO: read oracle/contract data and store a snapshot\n"
+                        f"  // Available: event.block.number, event.block.timestamp, event.block.hash\n"
+                        f"}});\n"
+                    )
+
         # ── Assemble imports ──
         lines: list[str] = ['import { ponder } from "ponder:registry";']
 
@@ -520,8 +543,15 @@ class PonderCompiler:
             extra_abi_imports.update(dep_abis)
 
         # ── ID expression ──
-        # setup has no event object, so default to a static string
-        id_expr = '"initial"' if event_name == "setup" else "event.id"
+        # setup:  no event object — use a static sentinel string.
+        # block:  no event.id (block handlers have no log/tx) — use block number.
+        # others: event.id is a unique log identifier provided by Ponder.
+        if event_name == "setup":
+            id_expr = '"initial"'
+        elif event_name == "block":
+            id_expr = "event.block.number.toString()"
+        else:
+            id_expr = "event.id"
         id_edge = self._edge_by_target.get((entity_id, "field-id"))
         if id_edge:
             id_expr, id_stmts, id_abis = self._resolve_value_ts(
@@ -891,6 +921,7 @@ class PonderCompiler:
         # ── Contract node ──────────────────────────────────────────────────────
         if node_type == "contract":
             is_setup = getattr(self, "_compiling_event_name", "") == "setup"
+            is_block = getattr(self, "_compiling_event_name", "") == "block"
 
             # In setup handlers there is no event object — implicit ports that
             # normally reference event.log.address / event.block.number etc. must
@@ -905,6 +936,17 @@ class PonderCompiler:
                 # block-number, block-timestamp, tx-hash have no equivalent in setup
                 return (f"undefined /* {source_handle} unavailable in setup handler */", [], set())
 
+            # In block handlers, event.log and event.transaction do not exist.
+            # implicit-block-number and implicit-block-timestamp work normally.
+            # implicit-instance-address falls through to the static-address path below.
+            if is_block and source_handle in ("implicit-address", "implicit-tx-hash"):
+                return (
+                    f"undefined /* {source_handle} unavailable in block handler — "
+                    f"use implicit-block-number or implicit-block-timestamp instead */",
+                    [],
+                    set(),
+                )
+
             # ── implicit-instance-address: configured deployment address ─────
             # Semantically different from implicit-address (event.log.address).
             # implicit-address is the proxy address that *emitted* the log;
@@ -915,6 +957,18 @@ class PonderCompiler:
             if source_handle == "implicit-instance-address":
                 ct_name = data.get("name", contract_type)
                 addr_expr = self._instance_address_expr(ct_name)
+                # In block handlers there is no event.log — event.log.address is
+                # invalid.  Replace it with undefined + comment so the output is
+                # at least syntactically valid and the user sees an actionable hint.
+                if is_block and addr_expr == "event.log.address":
+                    return (
+                        f"undefined /* implicit-instance-address unavailable in block "
+                        f"handler for '{ct_name}' (multiple instances per chain) — "
+                        f"ensure each chain has exactly one instance so a static "
+                        f"address can be emitted, or wire an explicit address */",
+                        [],
+                        set(),
+                    )
                 # Cross-contract ambiguity guard: event.log.address is only
                 # correct when ct_name IS the handler's own contract (i.e. the
                 # firing instance's address).  If we're reading a *different*
@@ -951,10 +1005,19 @@ class PonderCompiler:
 
                 # Resolve bind address — in setup handlers use the per-instance
                 # loop variable so each iteration reads from its own address.
-                if getattr(self, "_compiling_event_name", "") == "setup":
+                # In block handlers, event.log.address doesn't exist; replace it
+                # with a comment if _instance_address_expr can't resolve statically.
+                ev_name = getattr(self, "_compiling_event_name", "")
+                if ev_name == "setup":
                     bind_expr = "__address"
                 else:
                     bind_expr = self._instance_address_expr(ct_name)
+                    if ev_name == "block" and bind_expr == "event.log.address":
+                        bind_expr = (
+                            f"undefined /* read-{fn_name} bind address unavailable in "
+                            f"block handler for '{ct_name}' (multiple instances per chain) "
+                            f"— ensure each chain has exactly one instance */"
+                        )
 
                 stmts: list[str] = []
                 abi_names: set[str] = {ct_name}
@@ -1138,13 +1201,23 @@ class PonderCompiler:
                 stmts += bind_stmts
                 abi_names |= bind_abis
             else:
-                is_setup = getattr(self, "_compiling_event_name", "") == "setup"
+                cur_ev = getattr(self, "_compiling_event_name", "")
+                is_setup = cur_ev == "setup"
+                is_block = cur_ev == "block"
                 if is_setup and ref_contract_id == contract_id:
                     # Same contract as the setup handler — use the per-instance
                     # loop variable so each iteration reads from its own address.
                     bind_expr = "__address"
                 else:
                     bind_expr = self._instance_address_expr(ref_contract_type)
+                    # In block handlers event.log.address doesn't exist; replace
+                    # it with a comment when the address cannot be resolved statically.
+                    if is_block and bind_expr == "event.log.address":
+                        bind_expr = (
+                            f"undefined /* bind address unavailable in block handler "
+                            f"for '{ref_contract_type}' (multiple instances per chain) "
+                            f"— ensure each chain has exactly one instance */"
+                        )
 
             abi_names.add(ref_contract_type)
 

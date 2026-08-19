@@ -282,7 +282,9 @@ These are stored on individual Contract nodes in the canvas (not in `ponder_sett
 | `endBlock` | `number \| ""` | Optional block at which to stop indexing. Written to `ponder.config.ts` when non-empty. |
 | `includeCallTraces` | `boolean` | Emit `includeCallTraces: true` in the contract config block. |
 | `includeTransactionReceipts` | `boolean` | Emit `includeTransactionReceipts: true` in the contract config block. |
-| `hasSetupHandler` | `boolean` | Generate a `ponder.on("ContractName:setup", ...)` handler in `src/index.ts`. |
+| `hasSetupHandler` | `boolean` | Generate a `ponder.on("ContractName:setup", ...)` handler in `src/index.ts`. Adds an `event-setup` trigger port to the Contract node. |
+| `hasBlockHandler` | `boolean` | Generate a `ponder.on("ContractName:block", ...)` handler in `src/index.ts` and emit `block: { interval: N }` in `ponder.config.ts`. Adds an `event-block` trigger port to the Contract node. Ponder-only — ignored in The Graph output mode. |
+| `blockInterval` | `number \| string \| ""` | Positive integer controlling how often (in blocks) the block handler fires. Defaults to `1`. Stored as a raw value from the UI input; the generator coerces it to `int` (clamped to ≥ 1). Only meaningful when `hasBlockHandler` is `true`. |
 
 ### Per-network advanced options
 

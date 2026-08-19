@@ -134,7 +134,8 @@ export default function ContractNode({ id, data, selected }) {
     address = '', startBlock = '', endBlock = '', network = 'mainnet',
     // Ponder-specific options (persisted in node.data)
     includeCallTraces = false, includeTransactionReceipts = false,
-    hasSetupHandler = false, showPonderOpts = false,
+    hasSetupHandler = false, hasBlockHandler = false, blockInterval = 1,
+    showPonderOpts = false,
     // UI state persisted in node.data so it survives save/load
     showEvents = true, showReads = true, expandedEvents = {},
     onChange, onDelete,
@@ -154,7 +155,7 @@ export default function ContractNode({ id, data, selected }) {
   useEffect(() => {
     updateNodeInternals(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, events, collapsed, showEvents, showReads, expandedEventsKey, hasSetupHandler, showPonderOpts, updateNodeInternals]);
+  }, [id, events, collapsed, showEvents, showReads, expandedEventsKey, hasSetupHandler, hasBlockHandler, showPonderOpts, updateNodeInternals]);
 
   // ── Name change ────────────────────────────────────────────────────────────
   const handleNameChange = useCallback(
@@ -478,6 +479,25 @@ export default function ContractNode({ id, data, selected }) {
                   />
                 </div>
               )}
+              {/* Block handler trigger port */}
+              {hasBlockHandler && (
+                <div className="sg-node__port-row" style={{ position: 'relative' }}>
+                  <span className="sg-node__port-type" style={{ fontSize: 9, color: 'var(--port-event)', opacity: 0.7 }}>trigger</span>
+                  <span className="sg-node__port-label" style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    block
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 4 }}>
+                      (/{blockInterval})
+                    </span>
+                  </span>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id="event-block"
+                    className="event-port"
+                    style={{ right: -6 }}
+                  />
+                </div>
+              )}
               {showEvents && events.map((ev) => (
                 <EventPortGroup
                   key={ev.name}
@@ -567,6 +587,34 @@ export default function ContractNode({ id, data, selected }) {
                   <span style={{ fontSize: 9, color: 'var(--port-event)', marginLeft: 4 }}>← port added in Events</span>
                 )}
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  className="nodrag"
+                  checked={hasBlockHandler}
+                  onChange={(e) => onChange({ hasBlockHandler: e.target.checked })}
+                  style={{ accentColor: '#3b82f6', cursor: 'pointer' }}
+                />
+                block handler
+                {hasBlockHandler && (
+                  <span style={{ fontSize: 9, color: 'var(--port-event)', marginLeft: 4 }}>← port added in Events</span>
+                )}
+              </label>
+              {hasBlockHandler && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 20, fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>every</span>
+                  <input
+                    type="number"
+                    className="nodrag sg-node__input"
+                    min={1}
+                    step={1}
+                    value={blockInterval}
+                    onChange={(e) => onChange({ blockInterval: Math.max(1, parseInt(e.target.value) || 1) })}
+                    style={{ width: 54, textAlign: 'right' }}
+                  />
+                  <span style={{ color: 'var(--text-muted)' }}>blocks</span>
+                </div>
+              )}
             </div>
           )}
 

@@ -75,6 +75,7 @@ automatically — one amber trigger port per event, plus implicit ports for the 
 | `event-{Name}` | Amber trigger port — wire to an Entity `evt` port |
 | `event-{Name}-{param}` | Individual event parameter — click the ▶ chevron to reveal |
 | `event-setup` | **(Ponder only)** Setup trigger port — appears when **setup handler** is enabled in Ponder Options |
+| `event-block` | **(Ponder only)** Block trigger port — appears when **block handler** is enabled in Ponder Options. Fires every N blocks. |
 
 **Ponder Options** (expandable section at the bottom of a Contract node):
 
@@ -83,6 +84,8 @@ automatically — one amber trigger port per event, plus implicit ports for the 
 | `includeTransactionReceipts` | Attach full transaction receipt to every event handler (`event.transaction.receipt`) |
 | `includeCallTraces` | Enable call-trace ingestion for this contract (`ponder.on("ContractName:functionName()", ...)`) |
 | **setup handler** | Emit a `ponder.on("ContractName:setup", ...)` handler that runs once per chain at startup. Exposes an `event-setup` port — wire Entity nodes to it to initialise records on startup. The generated handler wraps all logic in `try/catch` so a failed `readContract` on one chain does not crash the entire indexer. |
+| **block handler** | Emit a `ponder.on("ContractName:block", ...)` handler that runs every N blocks (configurable with the **Block interval** input). Exposes an `event-block` port — wire Entity nodes to it to store periodic on-chain snapshots. Note: `event.args`, `event.log`, and `event.transaction` are not available inside block handlers — only `event.block.{number, timestamp, hash}` is accessible. |
+| **Block interval** | How many blocks to skip between block handler invocations (default: 1 = every block). Set higher values (e.g. 100) for oracle price feeds or infrequent state snapshots to avoid excessive writes. |
 
 ### Entity
 Creates one new record per event occurrence — good for transaction history. Wire a Contract
@@ -241,6 +244,13 @@ Click **Generate** in the toolbar to open the directory-picker modal. The modal 
   at that chain's address) from crashing the entire Ponder indexer.
 - **Stale ABI cleanup.** Each Generate run auto-deletes `abis/*.ts` files for contracts that
   no longer exist on the canvas, keeping the output directory in sync.
+- **Block handlers.** When a contract node has **block handler** enabled, the generated
+  `ponder.config.ts` includes a `block: { interval: N }` field for that contract and
+  `src/index.ts` includes a `ponder.on("ContractName:block", ...)` handler. Wire an Entity
+  node to the `event-block` trigger port to persist a snapshot on each firing. Only
+  `event.block.number`, `event.block.timestamp`, and `event.block.hash` are available inside
+  the handler — `event.args`, `event.log`, and `event.transaction` are not. Block handlers
+  are Ponder-only and are silently ignored in The Graph output mode.
 
 #### Ponder Settings (Generate modal)
 

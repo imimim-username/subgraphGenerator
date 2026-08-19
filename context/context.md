@@ -100,7 +100,7 @@ subgraphGenerator/
 │   ├── vite.config.js           # Proxy /api → :8000 in dev; build → static/
 │   └── package.json
 ├── templates/                   # Jinja2 templates (CLI mode)
-├── tests/                       # 1119+ passing tests
+├── tests/                       # 1160+ passing tests
 │   ├── test_validator.py        # Visual graph validator tests
 │   ├── test_server.py           # FastAPI endpoint tests
 │   ├── test_ponder_config.py    # ponder_config.py unit + integration tests
@@ -206,6 +206,56 @@ while (!__inserted) {
 All networks in the Networks panel are indexed concurrently inside a single Ponder process
 stored in the same database. The `chain` column separates data from different networks.
 
+### Block handlers (Ponder-only)
+
+When `hasBlockHandler` is enabled on a Contract node, `ponder_config.py` emits a
+`block: { interval: N }` field in the contract config and `ponder_compiler.py` emits a
+`ponder.on("ContractName:block", async ({ event, context }) => {...})` handler.
+
+**Available inside a block handler:**
+
+| Expression | Description |
+|---|---|
+| `event.block.number` | Current block number (`bigint`) |
+| `event.block.timestamp` | Block timestamp (`bigint`, Unix seconds) |
+| `event.block.hash` | Block hash |
+
+**NOT available inside a block handler** (no log / no transaction):
+
+| Port | Generated value |
+|---|---|
+| `implicit-address` | `undefined` (with comment) |
+| `implicit-tx-hash` | `undefined` (with comment) |
+| `implicit-instance-address` | `undefined` only when Ponder would use `event.log.address` as fallback (multi-instance chains); otherwise the static address literal is used. |
+
+**Default entity ID for block handlers:**
+
+Since `event.id` (a log-based identifier) is not available, the compiler uses
+`event.block.number.toString()` as the default ID expression when no explicit
+`field-id` wire is connected to the entity.
+
+**Stub emission:**
+
+If `hasBlockHandler` is true but no entity is wired to the `event-block` trigger port,
+the compiler emits a minimal TODO stub:
+
+```ts
+ponder.on("OraclePricesFeed:block", async ({ event, context }) => {
+  // TODO: read oracle/contract data and store a snapshot
+  // Available: event.block.number, event.block.timestamp, event.block.hash
+});
+```
+
+**Limitations:**
+
+- Block handlers are **Ponder-only**. The Graph does not support them from the visual
+  canvas (a `BLOCK_HANDLER_GRAPH_UNSUPPORTED` warning fires if you try).
+- The `blockInterval` field applies **per contract** — each contract on the canvas can
+  have a different polling frequency.
+- `AggregateEntity` trigger-event checklists do **not** include `block` events — only
+  regular `Event` and `setup` entries appear. Wire an `Entity` to the `event-block` port
+  to persist block snapshots.
+
 ### startBlock auto-detection
 
 When a contract instance has `startBlock == 0` and a real (non-zero) address, `ponder_config.py`
@@ -230,7 +280,9 @@ Mock target for tests: `"subgraph_wizard.abi.etherscan.get_contract_deployment_b
 | `endBlock` | Optional stop block. Written to `ponder.config.ts` when non-empty. |
 | `includeCallTraces` | Emit `includeCallTraces: true` in contract config. |
 | `includeTransactionReceipts` | Emit `includeTransactionReceipts: true` in contract config. |
-| `hasSetupHandler` | Generate a `ponder.on("ContractName:setup", ...)` handler stub. Adds a `setup` trigger port on the node. |
+| `hasSetupHandler` | Generate a `ponder.on("ContractName:setup", ...)` handler stub. Adds an `event-setup` trigger port on the node. |
+| `hasBlockHandler` | Generate a `ponder.on("ContractName:block", ...)` handler. Adds an `event-block` trigger port on the node. Emits `block: { interval: N }` in `ponder.config.ts`. |
+| `blockInterval` | Positive integer — how often (in blocks) Ponder fires the block handler. Defaults to `1`. Stored alongside `hasBlockHandler`; ignored when `hasBlockHandler` is false. |
 
 ### Per-network advanced options (stored on network entries)
 
@@ -253,19 +305,23 @@ After the ABI is loaded, ports appear automatically.
 
 | Port | Type | Description |
 |---|---|---|
-| `implicit-address` | Address | `event.address` — the contract address that fired the event (runtime value) |
-| `implicit-instance-address` | Address | The hardcoded deployed address from the Networks/Instances config |
-| `implicit-tx-hash` | Bytes | Transaction hash of the triggering transaction |
-| `implicit-block-number` | BigInt | Block number when the event was emitted |
-| `implicit-block-timestamp` | BigInt | Unix timestamp of the block |
+| `implicit-address` | Address | `event.log.address` — the contract address that fired the event (runtime value). **Unavailable** in block handlers (no log object). |
+| `implicit-instance-address` | Address | The hardcoded deployed address from the Networks/Instances config. Available in block handlers only when a single static address can be resolved. |
+| `implicit-tx-hash` | Bytes | Transaction hash of the triggering transaction. **Unavailable** in block handlers (no transaction object). |
+| `implicit-block-number` | BigInt | Block number when the event was emitted — `event.block.number`. Available in block handlers. |
+| `implicit-block-timestamp` | BigInt | Unix timestamp of the block — `event.block.timestamp`. Available in block handlers. |
 | `event-{Name}` | trigger (amber) | Fires once per occurrence of this event |
 | `event-{Name}-{param}` | varies | Individual parameter value — revealed by clicking the ▶ chevron |
+| `event-setup` | trigger (amber) | **(Ponder only)** Fires once per chain at indexer startup. Added when `hasSetupHandler` is enabled. |
+| `event-block` | trigger (amber) | **(Ponder only)** Fires every N blocks (interval controlled by `blockInterval`). Added when `hasBlockHandler` is enabled. |
 
 **Ponder Options (collapsible section on node):**
 - `endBlock` input
 - `includeTransactionReceipts` checkbox
 - `includeCallTraces` checkbox
 - `hasSetupHandler` checkbox — adds `event-setup` trigger port
+- `hasBlockHandler` checkbox — adds `event-block` trigger port; reveals `blockInterval` input
+- `blockInterval` input — positive integer; defaults to 1 (every block)
 
 ---
 
@@ -401,6 +457,7 @@ the Graph pipeline.
 - `ENTITY_NO_NAME`, `ENTITY_NO_ID_WIRED`
 - `TYPE_MISMATCH`
 - `CONTRACTREAD_NO_CONTRACT`, `CONTRACTREAD_BAD_FN_INDEX`
+- `BLOCK_HANDLER_INVALID_INTERVAL` — `blockInterval` is not a positive integer when `hasBlockHandler` is true
 
 **Warning codes** (generation continues):
 - `CONTRACT_EMPTY_INSTANCE`, `DISCONNECTED_CONTRACT`, `DISCONNECTED_ENTITY`
@@ -409,6 +466,9 @@ the Graph pipeline.
 - `CONDITIONAL_NO_CONDITION`
 - `TYPECAST_BAD_INDEX`
 - `WIRE_UNKNOWN_PORT` (wire targets a port that no longer exists — stale after canvas edits)
+- `BLOCK_HANDLER_GRAPH_UNSUPPORTED` — `hasBlockHandler` is enabled but output mode is The Graph; block handlers are Ponder-only and will be ignored
+
+The `DISCONNECTED_CONTRACT` warning also considers `event-block` as a valid wired port (a contract that only has a block handler wired to an entity is not considered disconnected).
 
 ---
 
@@ -520,24 +580,26 @@ Matches graph-cli's behaviour: only the keccak256 hash is stored in log topics.
 
 ## Testing
 
-**1122+ tests passing.**
+**1160+ tests passing.**
 
 ```bash
 pytest              # all tests
 pytest -v
-pytest tests/test_ponder_config.py   # Ponder config + boilerplate + API index + startBlock
-pytest tests/test_ponder_compiler.py # Ponder handler compiler
+pytest tests/test_ponder_config.py   # Ponder config + boilerplate + API index + startBlock + block handler
+pytest tests/test_ponder_compiler.py # Ponder handler compiler (setup handlers, block handlers)
 pytest tests/test_ponder_schema.py   # Ponder schema generator
 pytest tests/test_full_generation_ponder.py  # End-to-end Ponder generation
-pytest tests/test_validator.py       # Visual graph validator
+pytest tests/test_validator.py       # Visual graph validator (BLOCK_HANDLER_* codes)
 pytest tests/test_server.py          # FastAPI endpoints
 ```
 
 Notable test files:
 - `test_ponder_config.py` — `render_ponder_config`, `render_ponder_api_index`,
-  `TestAutoChainColumn`, `TestStartBlockEtherscanIntegration`
-- `test_ponder_compiler.py` — `TestAutoChainField`, suffix-retry, setup handlers
-- `test_validator.py` — all node types, type mismatch, aggregate trigger checklist
+  `TestAutoChainColumn`, `TestStartBlockEtherscanIntegration`, `TestBlockHandler`
+- `test_ponder_compiler.py` — `TestAutoChainField`, suffix-retry, setup handlers, `TestBlockHandler`
+- `test_validator.py` — all node types, type mismatch, aggregate trigger checklist,
+  `BLOCK_HANDLER_INVALID_INTERVAL`, `BLOCK_HANDLER_GRAPH_UNSUPPORTED`, block handler
+  `DISCONNECTED_CONTRACT` variants
 - `test_server.py` — health, ABI parse/fetch, config CRUD, validate, generate endpoints
 
 ---
@@ -616,6 +678,57 @@ as an argument — but `token` is the zero-address when `amount == 0`, causing a
 - Wrap reads in `try/catch` — silently swallows real errors
 
 Not a simple fix. Architectural tradeoff to revisit if user demand warrants it.
+
+---
+
+## Recent Changes (2026-08-18)
+
+### Block handler support (Ponder-only feature)
+
+Added support for `ponder.on("ContractName:block", ...)` handlers — Ponder's
+mechanism for indexing data on a per-block cadence rather than per-event.
+
+**Backend changes:**
+
+- **`generate/ponder_config.py`** — reads `hasBlockHandler` and `blockInterval`
+  from the contract node data. When `hasBlockHandler` is true, emits
+  `block: { interval: N }` in the contract's config entry (both single-chain and
+  multi-chain formats).
+
+- **`generate/ponder_compiler.py`** — emits a `ponder.on("ContractName:block", ...)`
+  handler after the setup handler (if any). Key details:
+  - Default entity ID: `event.block.number.toString()` (no `event.id` in block handlers).
+  - Unavailable implicit ports (`implicit-address`, `implicit-tx-hash`) return
+    `undefined` with an actionable comment.
+  - `implicit-instance-address` returns `undefined` only in the multi-instance-per-chain
+    fallback case; static single-chain addresses are emitted correctly.
+  - A TODO stub is emitted when no entity is wired to the `event-block` trigger port.
+  - `_compiling_event_name` is set to `"block"` while compiling block handlers so all
+    port guards inside `_resolve_value_ts` can detect the context.
+
+- **`generate/validator.py`** — three changes:
+  - `event-block` is added to the `DISCONNECTED_CONTRACT` candidate port set so a
+    contract that only has a block handler wired is not incorrectly warned about.
+  - `BLOCK_HANDLER_INVALID_INTERVAL` error fires when `blockInterval` is set to a
+    non-positive or non-numeric value.
+  - `BLOCK_HANDLER_GRAPH_UNSUPPORTED` warning fires when `hasBlockHandler` is true
+    but `output_mode` is `"graph"`.
+
+**Tests added** (`tests/test_ponder_config.py` and `tests/test_ponder_compiler.py`):
+
+- `TestBlockHandler` class in `test_ponder_config.py` — 8 tests covering interval
+  emission, default interval, disabled flag, coercion from string, clamping from 0,
+  corrupted non-numeric value, and multi-chain format.
+- `TestBlockHandler` class in `test_ponder_compiler.py` — tests for handler emission,
+  stub when unwired, ABI import in stub, default block-number ID, full entity insert.
+
+**Frontend (`ContractNode.jsx`) — PENDING:**
+
+The `hasBlockHandler` checkbox + `blockInterval` input UI and the `event-block` trigger
+port rendering have not yet been added to `ContractNode.jsx`. Backend generation is
+fully functional; the frontend fields must be wired up before users can enable block
+handlers through the visual canvas. (The feature can be exercised by manually editing
+`visual-config.json` in the meantime.)
 
 ---
 

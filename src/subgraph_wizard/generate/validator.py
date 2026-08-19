@@ -43,6 +43,8 @@ Warnings (generation continues but output may be incomplete):
   CONTRACTREAD_NO_BIND_ADDRESS         — ContractRead contract has no address; will silently call event.address
   ENTITY_CONDITIONAL_SAVE_RISK         — All required fields are conditional; a null-field .save() may be rejected
   CONTRACT_START_BLOCK_ZERO            — A contract instance has startBlock=0; subgraph will index from genesis
+  BLOCK_HANDLER_INVALID_INTERVAL       — blockInterval is not a positive integer when hasBlockHandler is true
+  BLOCK_HANDLER_GRAPH_UNSUPPORTED      — block handler enabled but output mode is The Graph (Ponder-only feature)
 """
 
 from __future__ import annotations
@@ -309,13 +311,18 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
             if not data.get("abi"):
                 _err("CONTRACT_NO_ABI", f"Contract node '{data.get('name', nid)}' has no ABI loaded.", node_id=nid)
 
-            # Check that at least one event port has an outgoing edge
+            # Check that at least one event port has an outgoing edge.
+            # Build the full set of source handles that count as "wired":
+            # ABI events + setup handler port + block handler port.
+            # The check only fires when there is at least one candidate port
+            # (contracts with no events and no handlers have nothing to wire).
             events = data.get("events", [])
-            if events:
-                event_port_ids = {f"event-{ev['name']}" for ev in events}
-                # Also count the setup handler port as a wired event
-                if data.get("hasSetupHandler"):
-                    event_port_ids.add("event-setup")
+            event_port_ids: set[str] = {f"event-{ev['name']}" for ev in events}
+            if data.get("hasSetupHandler"):
+                event_port_ids.add("event-setup")
+            if data.get("hasBlockHandler"):
+                event_port_ids.add("event-block")
+            if event_port_ids:
                 has_wired_event = any(
                     e["source"] == nid and e.get("sourceHandle", "") in event_port_ids
                     for e in edges
@@ -326,6 +333,24 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                         f"Contract '{data.get('name', nid)}' has no events wired to any entity or aggregate.",
                         node_id=nid,
                     )
+
+            # Validate blockInterval when block handler is enabled.
+            # None/empty string means "use default of 1" — not an error.
+            # Any other non-positive or non-numeric value is an error.
+            if data.get("hasBlockHandler"):
+                raw_interval = data.get("blockInterval")
+                if raw_interval is not None and raw_interval != "":
+                    try:
+                        interval_val = int(raw_interval)
+                        if interval_val < 1:
+                            raise ValueError
+                    except (ValueError, TypeError):
+                        _err(
+                            "BLOCK_HANDLER_INVALID_INTERVAL",
+                            f"Contract '{data.get('name', nid)}' has an invalid blockInterval "
+                            f"'{raw_interval}'. Must be a positive integer (≥ 1).",
+                            node_id=nid,
+                        )
 
             # Warn when any instance has startBlock=0 (or unset).
             # The generator tries Etherscan auto-detection, but it silently falls
@@ -629,8 +654,25 @@ def validate_graph(visual_config: dict[str, Any]) -> list[dict[str, Any]]:
                             node_id=nid,
                         )
 
-    # ── Ponder-mode-specific checks ───────────────────────────────────────────
+    # ── Output-mode-specific checks ───────────────────────────────────────────
     output_mode = visual_config.get("output_mode", "graph")
+
+    # Block handlers are Ponder-only — warn when generating for The Graph
+    if output_mode != "ponder":
+        for node in nodes:
+            if node.get("type") != "contract":
+                continue
+            nid = node["id"]
+            data = node.get("data", {})
+            if data.get("hasBlockHandler"):
+                _warn(
+                    "BLOCK_HANDLER_GRAPH_UNSUPPORTED",
+                    f"Contract '{data.get('name', nid)}' has a block handler enabled, "
+                    f"but block handlers are only supported in Ponder output mode. "
+                    f"The block handler will be ignored for The Graph generation.",
+                    node_id=nid,
+                )
+
     if output_mode == "ponder":
         # Warn for BigDecimal fields — Ponder has no native decimal type
         for node in nodes:

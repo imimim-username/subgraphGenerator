@@ -5,10 +5,11 @@ from subgraph_wizard.generate.validator import validate_graph, has_errors
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _make_config(nodes, edges):
+def _make_config(nodes, edges, output_mode="graph"):
     return {
         "schema_version": 1,
         "subgraph_name": "test",
+        "output_mode": output_mode,
         "networks": [],
         "nodes": nodes,
         "edges": edges,
@@ -1135,3 +1136,159 @@ class TestContractReadNoBindAddress:
         matching = [i for i in issues if i["code"] == "CONTRACTREAD_NO_BIND_ADDRESS"]
         assert matching[0]["level"] == "warning"
         assert matching[0]["node_id"] == "cr1"
+
+
+# ── BLOCK_HANDLER_INVALID_INTERVAL ────────────────────────────────────────────
+
+class TestBlockHandlerInvalidInterval:
+    def test_zero_interval_is_error(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        contract["data"]["blockInterval"] = 0
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_INVALID_INTERVAL" in codes
+
+    def test_negative_interval_is_error(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        contract["data"]["blockInterval"] = -5
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_INVALID_INTERVAL" in codes
+
+    def test_string_non_numeric_interval_is_error(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        contract["data"]["blockInterval"] = "abc"
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_INVALID_INTERVAL" in codes
+
+    def test_valid_interval_no_error(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        contract["data"]["blockInterval"] = 100
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_INVALID_INTERVAL" not in codes
+
+    def test_error_level_is_error(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        contract["data"]["blockInterval"] = 0
+        issues = validate_graph(_make_config([contract], []))
+        matching = [i for i in issues if i["code"] == "BLOCK_HANDLER_INVALID_INTERVAL"]
+        assert matching[0]["level"] == "error"
+
+    def test_no_block_handler_interval_not_checked(self):
+        """blockInterval is only validated when hasBlockHandler is True."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = False
+        contract["data"]["blockInterval"] = -99
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_INVALID_INTERVAL" not in codes
+
+
+# ── BLOCK_HANDLER_GRAPH_UNSUPPORTED ───────────────────────────────────────────
+
+class TestBlockHandlerGraphUnsupported:
+    def test_warning_emitted_in_graph_mode(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        cfg = _make_config([contract], [], output_mode="graph")
+        issues = validate_graph(cfg)
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_GRAPH_UNSUPPORTED" in codes
+
+    def test_no_warning_in_ponder_mode(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        cfg = _make_config([contract], [], output_mode="ponder")
+        issues = validate_graph(cfg)
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_GRAPH_UNSUPPORTED" not in codes
+
+    def test_no_warning_when_block_handler_disabled(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = False
+        cfg = _make_config([contract], [], output_mode="graph")
+        issues = validate_graph(cfg)
+        codes = {i["code"] for i in issues}
+        assert "BLOCK_HANDLER_GRAPH_UNSUPPORTED" not in codes
+
+    def test_warning_level_is_warning(self):
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        cfg = _make_config([contract], [], output_mode="graph")
+        issues = validate_graph(cfg)
+        matching = [i for i in issues if i["code"] == "BLOCK_HANDLER_GRAPH_UNSUPPORTED"]
+        assert matching[0]["level"] == "warning"
+
+
+# ── DISCONNECTED_CONTRACT — block handler variant ─────────────────────────────
+
+class TestDisconnectedContractBlockHandler:
+    def test_block_handler_only_wired_no_warning(self):
+        """A contract with only an event-block edge (no ABI event edges) must not
+        be flagged as disconnected — the block port counts as a connection."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        entity = _entity_node("e1")
+        edges = [_edge("ed1", "c1", "event-block", "e1", "field-id")]
+        issues = validate_graph(_make_config([contract, entity], edges))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes
+
+    def test_block_handler_enabled_but_not_wired_still_warns(self):
+        """Enabling hasBlockHandler but wiring nothing still triggers
+        DISCONNECTED_CONTRACT — the flag alone isn't enough."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" in codes
+
+    def test_block_handler_and_event_both_wired_no_warning(self):
+        """Both an event-block edge and a regular event edge → no warning."""
+        contract = _contract_node("c1", events=[TRANSFER_EVENT])
+        contract["data"]["hasBlockHandler"] = True
+        entity_block = _entity_node("e1", name="Snapshot")
+        entity_event = _entity_node("e2", name="Transfer")
+        edges = [
+            _edge("ed1", "c1", "event-block", "e1", "field-id"),
+            _edge("ed2", "c1", "event-Transfer", "e2", "field-id"),
+        ]
+        issues = validate_graph(_make_config([contract, entity_block, entity_event], edges))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes
+
+    def test_block_handler_only_no_abi_events_not_wired_warns(self):
+        """A contract with NO ABI events and a block handler enabled but nothing
+        wired should still produce DISCONNECTED_CONTRACT — the bug was that the
+        'if events:' guard skipped this case entirely."""
+        contract = _contract_node("c1", events=[])   # no ABI events
+        contract["data"]["hasBlockHandler"] = True
+        # Nothing wired
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" in codes
+
+    def test_block_handler_only_no_abi_events_wired_no_warning(self):
+        """A contract with no ABI events but block handler wired → no warning."""
+        contract = _contract_node("c1", events=[])
+        contract["data"]["hasBlockHandler"] = True
+        entity = _entity_node("e1")
+        edges = [_edge("ed1", "c1", "event-block", "e1", "field-id")]
+        issues = validate_graph(_make_config([contract, entity], edges))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes
+
+    def test_no_events_no_handlers_no_warning(self):
+        """A contract with no ABI events AND no handlers → no disconnected warning
+        (there is nothing to wire, so the warning would be a false positive)."""
+        contract = _contract_node("c1", events=[])
+        issues = validate_graph(_make_config([contract], []))
+        codes = {i["code"] for i in issues}
+        assert "DISCONNECTED_CONTRACT" not in codes

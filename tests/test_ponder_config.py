@@ -1049,3 +1049,94 @@ class TestAutoChainColumn:
         ])
         schema = render_ponder_schema(cfg)
         assert schema.count("chain: t.text().notNull(),") == 2
+
+
+# ── Block handler (hasBlockHandler / blockInterval) ────────────────────────────
+
+class TestBlockHandler:
+    def test_block_interval_emitted_when_enabled(self):
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=100)],
+        ))
+        assert "block: { interval: 100 }" in out
+
+    def test_block_interval_default_one_when_not_set(self):
+        """blockInterval absent → defaults to 1."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True)],
+        ))
+        assert "block: { interval: 1 }" in out
+
+    def test_block_not_emitted_when_disabled(self):
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=False)],
+        ))
+        assert "block:" not in out
+
+    def test_block_not_emitted_when_flag_absent(self):
+        """No hasBlockHandler key in node data → no block: field."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token")],
+        ))
+        assert "block:" not in out
+
+    def test_block_not_emitted_when_no_node(self):
+        """No contract node at all → no block: field."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+        ))
+        assert "block:" not in out
+
+    def test_block_with_other_per_contract_flags(self):
+        """block: and includeCallTraces can coexist in the same contract entry."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50,
+                                  includeCallTraces=True)],
+        ))
+        assert "block: { interval: 50 }" in out
+        assert "includeCallTraces: true" in out
+
+    def test_block_interval_string_coerced_to_int(self):
+        """blockInterval stored as string (e.g. from form input) is coerced."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval="25")],
+        ))
+        assert "block: { interval: 25 }" in out
+
+    def test_block_interval_zero_clamped_to_one(self):
+        """blockInterval of 0 is clamped to 1 (minimum valid interval)."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=0)],
+        ))
+        assert "block: { interval: 1 }" in out
+
+    def test_block_interval_non_numeric_string_defaults_to_one(self):
+        """Non-numeric blockInterval (e.g. corrupted save) is safely clamped to 1
+        rather than crashing with ValueError."""
+        out = render_ponder_config(_cfg(
+            networks=[_net("mainnet", _contract_instances(_inst()))],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval="abc")],
+        ))
+        assert "block: { interval: 1 }" in out
+
+    def test_block_interval_in_multichain_format(self):
+        """block: { interval } must appear in the top-level fields of a multi-chain contract."""
+        out = render_ponder_config(_cfg(
+            networks=[
+                _net("mainnet",  {"Token": {"instances": [_inst("0xAAAA", 14_000_000)]}}),
+                _net("optimism", {"Token": {"instances": [_inst("0xBBBB",  1_000_000)]}}),
+            ],
+            nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50)],
+        ))
+        # block: must appear in the contract section
+        assert "block: { interval: 50 }" in out
+        # And the multi-chain format has both chain sub-entries
+        assert "mainnet:" in out
+        assert "optimism:" in out

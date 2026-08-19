@@ -415,6 +415,19 @@ playground).
 the generator queries Etherscan to find the deployment block automatically, provided
 `ETHERSCAN_API_KEY` is set in the environment.
 
+**Block handlers (periodic snapshots).** Enable the **block handler** option in a
+Contract node's Ponder Options section to generate a
+`ponder.on("ContractName:block", ...)` handler. Use the **Block interval** input to
+control how frequently it fires (e.g. `100` = every 100 blocks). Wire an Entity node
+to the `event-block` trigger port to store periodic snapshots. Only `event.block.number`,
+`event.block.timestamp`, and `event.block.hash` are accessible — `event.args`,
+`event.log`, and `event.transaction` are not available in block handlers.
+
+> **Use block handlers for:** oracle price snapshots, TVL watermarks, daily/hourly
+> aggregates that need to fire even when no event is emitted.
+> **Set a sensible interval.** Interval 1 fires on every block (~12 s on mainnet);
+> for hourly snapshots on mainnet use interval ≈ 300.
+
 **Entity ID uniqueness.** The default entity ID expression is:
 
 ```typescript

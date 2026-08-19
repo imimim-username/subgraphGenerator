@@ -1540,3 +1540,154 @@ class TestOnConflictIndentation:
                     f"'await' line has {await_indent} spaces"
                 )
                 break
+
+
+# ── Block handler ──────────────────────────────────────────────────────────────
+
+class TestBlockHandler:
+    def test_block_handler_emitted_when_flag_set(self):
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert 'ponder.on("Oracle:block"' in src
+
+    def test_block_handler_not_emitted_when_flag_absent(self):
+        nodes = [_contract("c1", "Oracle")]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert ":block" not in src
+
+    def test_block_handler_not_emitted_when_flag_false(self):
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=False)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert ":block" not in src
+
+    def test_block_handler_stub_when_no_entities_wired(self):
+        """With no entity wired to event-block, a TODO stub is emitted."""
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert "TODO" in src
+
+    def test_block_handler_stub_imports_abi(self):
+        """Even with nothing wired, the ABI import appears so readContract() compiles."""
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        assert "OracleAbi" in src
+
+    def test_block_handler_uses_block_number_as_default_id(self):
+        """Entities wired to event-block must use event.block.number.toString() as base ID."""
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snapshot"),
+        ]
+        edges = [_edge("ed1", "c1", "event-block", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.block.number.toString()" in src
+        assert "event.id" not in src
+
+    def test_block_handler_entity_insert_emitted(self):
+        """Full compile with a wired entity emits a db insert inside the block handler."""
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snapshot"),
+        ]
+        edges = [_edge("ed1", "c1", "event-block", "e1", "trigger")]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert 'ponder.on("Oracle:block"' in src
+        # Ponder compiler uses the schema table ref (e.g. "snapshot" from ponder:schema)
+        assert "snapshot" in src
+
+    def test_block_handler_implicit_address_unavailable(self):
+        """implicit-address wired into a block handler emits undefined with a comment."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "addr", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-block", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-address", "e1", "field-addr"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "undefined" in src
+        assert "implicit-address" in src
+
+    def test_block_handler_implicit_tx_hash_unavailable(self):
+        """implicit-tx-hash wired into a block handler emits undefined with a comment."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "txHash", "type": "String"},
+        ]
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-block", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-tx-hash", "e1", "field-txHash"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "undefined" in src
+        assert "implicit-tx-hash" in src
+
+    def test_block_handler_block_number_available(self):
+        """implicit-block-number wired in a block handler emits event.block.number."""
+        fields = [
+            {"name": "id", "type": "ID", "required": True},
+            {"name": "blockNum", "type": "BigInt"},
+        ]
+        nodes = [
+            _contract("c1", "Oracle", hasBlockHandler=True),
+            _entity("e1", "Snap", fields=fields),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-block", "e1", "trigger"),
+            _edge("ed2", "c1", "implicit-block-number", "e1", "field-blockNum"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "event.block.number" in src
+
+    def test_block_and_regular_event_both_emitted(self):
+        """A contract with both a block handler and an ABI event emits two handlers."""
+        nodes = [
+            _contract("c1", "Oracle",
+                events=[_event("AnswerUpdated")],
+                hasBlockHandler=True,
+            ),
+            _entity("e1", "Answer"),
+            _entity("e2", "Snapshot"),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-AnswerUpdated", "e1", "trigger"),
+            _edge("ed2", "c1", "event-block", "e2", "trigger"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert 'ponder.on("Oracle:AnswerUpdated"' in src
+        assert 'ponder.on("Oracle:block"' in src
+
+    def test_block_handler_uses_event_block_signature(self):
+        """Block handler destructures { event, context } (not { context } like setup)."""
+        nodes = [_contract("c1", "Oracle", hasBlockHandler=True)]
+        src = compile_ponder(_cfg(nodes=nodes))["src/index.ts"]
+        block_start = src.index('ponder.on("Oracle:block"')
+        block_snippet = src[block_start:block_start + 200]
+        assert "{ event, context }" in block_snippet
+
+    def test_regular_event_still_uses_event_id(self):
+        """When a block handler coexists with an ABI event, the ABI handler still uses event.id."""
+        nodes = [
+            _contract("c1", "Oracle",
+                events=[_event("AnswerUpdated")],
+                hasBlockHandler=True,
+            ),
+            _entity("e1", "Answer"),
+            _entity("e2", "Snapshot"),
+        ]
+        edges = [
+            _edge("ed1", "c1", "event-AnswerUpdated", "e1", "trigger"),
+            _edge("ed2", "c1", "event-block", "e2", "trigger"),
+        ]
+        src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
+        assert "__baseId = event.id" in src
+        assert "event.block.number.toString()" in src

@@ -408,14 +408,21 @@ Should we produce a Ponder-specific version explaining `pnpm install`,
 
 ## What We Are NOT Doing (v1 scope)
 
-- **Block interval handlers** — the `blocks:` config key isn't representable
-  with current node types. Future: add a "Block Interval" node type.
-- **Setup handlers** — `ponder.on("Contract:setup", ...)` for initialization.
-  Future: add a "Setup" node or flag on entity nodes.
+> **Note:** Several items below have since been implemented. See `context/context.md`
+> and `docs/config-format.md` for the authoritative feature list.
+
+- **Block interval handlers** — ✅ **IMPLEMENTED** (2026-08-18). Enabled via
+  `hasBlockHandler` checkbox + `blockInterval` input on the Contract node. Emits
+  `block: { interval: N }` in `ponder.config.ts` and a
+  `ponder.on("ContractName:block", ...)` handler in `src/index.ts`. Frontend
+  (`ContractNode.jsx`) UI is still pending.
+- **Setup handlers** — ✅ **IMPLEMENTED** (2026-05-01). Enabled via `hasSetupHandler`
+  checkbox on the Contract node. Adds an `event-setup` trigger port.
 - **Factory pattern** — `factory({...})` for dynamic addresses. Future: add
   a "Factory" mode to the contract node.
 - **Call trace handlers** — requires `includeCallTraces: true` and a different
-  wiring model. Future work.
+  wiring model. The `includeCallTraces` flag is already emitted in `ponder.config.ts`;
+  handler wiring from the canvas is future work.
 - **Account/transaction indexing** — Ponder's `accounts:` config. Not in scope.
 
 ---
