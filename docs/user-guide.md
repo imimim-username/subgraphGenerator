@@ -525,6 +525,33 @@ This will log:
 
 ## Troubleshooting
 
+### Ponder — GraphQL returns `{"items": []}` during backfill
+
+If the indexer is clearly running (the Ponder dashboard shows blocks being processed and a
+non-zero handler count) but every GraphQL query returns empty results:
+
+**1. PostgreSQL stale schema.** Ponder creates a schema per project run. If a previous run
+left orphaned schemas in the database, the live instance may be writing to one schema while
+GraphQL reads from another. To diagnose, connect to the database and list schemas:
+
+```sql
+SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'ponder%';
+```
+
+Drop any stale schemas (`DROP SCHEMA ponder_<old_hash> CASCADE;`), restart Ponder, and retry.
+
+As a quick sanity check, comment out `DATABASE_URL` in `.env.local` to switch to PGlite
+(embedded, always fresh). If results appear with PGlite, the issue is in your PostgreSQL
+instance.
+
+**2. Contract in `contracts:` with no event handlers.** Ponder scans all historical event
+logs for every entry in the `contracts:` section before serving GraphQL data. If a contract
+appears in `contracts:` with no registered event handlers, the API is gated until the full
+chain event-log history is processed. This can take hours. The generator avoids this by
+placing block-only contracts (contracts used solely for block handlers or ContractRead, with
+no event handler edges) in the `blocks:` section only — but if you see this symptom after
+manually editing `ponder.config.ts`, check for empty-handler contracts in `contracts:`.
+
 ### Visual editor — fields are null or wrong in the deployed subgraph
 
 Two common causes:

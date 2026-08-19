@@ -100,7 +100,7 @@ subgraphGenerator/
 │   ├── vite.config.js           # Proxy /api → :8000 in dev; build → static/
 │   └── package.json
 ├── templates/                   # Jinja2 templates (CLI mode)
-├── tests/                       # 1160+ passing tests
+├── tests/                       # 1244 passing tests
 │   ├── test_validator.py        # Visual graph validator tests
 │   ├── test_server.py           # FastAPI endpoint tests
 │   ├── test_ponder_config.py    # ponder_config.py unit + integration tests
@@ -208,9 +208,26 @@ stored in the same database. The `chain` column separates data from different ne
 
 ### Block handlers (Ponder-only)
 
-When `hasBlockHandler` is enabled on a Contract node, `ponder_config.py` emits a
-`block: { interval: N }` field in the contract config and `ponder_compiler.py` emits a
-`ponder.on("ContractName:block", async ({ event, context }) => {...})` handler.
+When `hasBlockHandler` is enabled on a Contract node, `ponder_config.py` emits an entry in
+the **`blocks:`** section of `ponder.config.ts` (named `{ContractName}Block`) and
+`ponder_compiler.py` emits a `ponder.on("{ContractName}Block:block", async ({ event, context }) => {...})` handler.
+
+**Config placement rules:**
+
+| Contract has event handlers? | Has block handler? | Result |
+|---|---|---|
+| Yes | No | `contracts:` only |
+| No | Yes | `blocks:` only |
+| Yes | Yes | Both `contracts:` and `blocks:` |
+
+Block-only contracts are deliberately excluded from the `contracts:` section. Including a
+contract in `contracts:` without any registered event handlers causes Ponder to scan all
+historical event logs before serving any GraphQL data, blocking the API until the full
+chain history is processed.
+
+**ContractRead inside block handlers** uses `context.client.readContract({ abi, address, functionName, blockNumber })` — not `context.contracts.X.read.Y()`. This is because block-only
+contracts are not in the `contracts:` section and therefore not present in `context.contracts`.
+The raw `context.client` call works at any block without requiring a `contracts:` registration.
 
 **Available inside a block handler:**
 
@@ -580,7 +597,7 @@ Matches graph-cli's behaviour: only the keccak256 hash is stored in log topics.
 
 ## Testing
 
-**1160+ tests passing.**
+**1244 tests passing.**
 
 ```bash
 pytest              # all tests
@@ -640,7 +657,6 @@ cd frontend && npm run build
 
 - Remote: `git@github.com:imimim-username/subgraphGenerator.git`
 - Active branch: `main`
-- Push command: `GIT_SSH_COMMAND="ssh -i /workspace/extra/github-keys/github_deploy -o StrictHostKeyChecking=no" git push origin main`
 
 ---
 
@@ -678,6 +694,70 @@ as an argument — but `token` is the zero-address when `amount == 0`, causing a
 - Wrap reads in `try/catch` — silently swallows real errors
 
 Not a simple fix. Architectural tradeoff to revisit if user demand warrants it.
+
+---
+
+## Recent Changes (2026-08-19)
+
+### Bug fixes
+
+**Fix 1 — ContractRead multi-output: index-based access instead of named property access**
+
+`ponder_compiler.py` was generating `result.fieldName` for multi-output view functions
+(e.g. Chainlink `latestRoundData`). viem returns a **plain JavaScript array** (not a named
+object) for functions with multiple flat outputs, so named access returns `undefined` → `null`
+in PostgreSQL.
+
+Fixed by emitting `result[N]` (positional index) for multi-output functions:
+
+```typescript
+// Before (broken):
+roundId: _contractread_140__out.roundId,  // undefined → null
+
+// After (correct):
+roundId: _contractread_140__out[0],        // correct value
+```
+
+Single-struct outputs (tuple with named components) continue to use `result.fieldName`.
+
+Tests updated in `test_ponder_compiler.py`: `test_contractread_multi_output_accesses_by_index`
+asserts index-based access and explicitly rejects named property access.
+
+---
+
+**Fix 2 — Block-only contracts removed from `contracts:` section**
+
+`ponder_config.py` was including every contract in the `contracts:` section regardless of
+whether it had registered event handlers. Ponder scans all historical event logs for every
+entry in `contracts:` before serving any GraphQL data — so a block-only contract with no
+event handlers caused the API to return `{"items": []}` until the full chain event-log
+backfill completed (which could take hours).
+
+Fixed by detecting event-handler edges from the canvas `edges` array:
+- Edges with `sourceHandle` matching `event-{EventName}` (but not `event-block`) indicate
+  a real event handler.
+- Only contracts with at least one such edge appear in the `contracts:` section.
+- Block-only contracts appear exclusively in the `blocks:` section.
+
+The `contracts:` section is now conditional (omitted entirely when empty).
+
+---
+
+**Fix 3 — Block/setup handler ports invisible on contracts with no ABI events**
+
+`ContractNode.jsx` wrapped the entire Events section (which contains `event-block` and
+`event-setup` trigger ports) in `{hasAbi && events.length > 0 && (...)}`. Contracts with
+ABIs that have only read functions and no events (e.g. oracle wrappers) never rendered the
+Events section, so the block handler port was invisible even when `hasBlockHandler` was
+enabled.
+
+Fixed by expanding the condition to:
+
+```jsx
+{hasAbi && (events.length > 0 || hasBlockHandler || hasSetupHandler) && (...)}
+```
+
+Frontend bundle rebuilt and committed (`src/subgraph_wizard/static/`).
 
 ---
 
@@ -722,13 +802,12 @@ mechanism for indexing data on a per-block cadence rather than per-event.
 - `TestBlockHandler` class in `test_ponder_compiler.py` — tests for handler emission,
   stub when unwired, ABI import in stub, default block-number ID, full entity insert.
 
-**Frontend (`ContractNode.jsx`) — PENDING:**
+**Frontend (`ContractNode.jsx`):**
 
-The `hasBlockHandler` checkbox + `blockInterval` input UI and the `event-block` trigger
-port rendering have not yet been added to `ContractNode.jsx`. Backend generation is
-fully functional; the frontend fields must be wired up before users can enable block
-handlers through the visual canvas. (The feature can be exercised by manually editing
-`visual-config.json` in the meantime.)
+The `hasBlockHandler` checkbox, `blockInterval` input, and `event-block` trigger port are
+fully implemented. The Events section (which contains the block/setup trigger ports) renders
+whenever `hasBlockHandler` or `hasSetupHandler` is true, even when the contract ABI has no
+events.
 
 ---
 
