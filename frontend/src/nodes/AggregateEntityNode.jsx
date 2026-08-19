@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Handle, Position, useUpdateNodeInternals, useReactFlow } from '@xyflow/react';
 import { LayoutGrid, Plus, Trash2, ChevronDown, ChevronUp, Zap, GripVertical } from 'lucide-react';
 
 // ── Header colour ─────────────────────────────────────────────────────────────
@@ -226,6 +226,8 @@ export default function AggregateEntityNode({ id, data, selected }) {
     onChange,
     onDelete,
   } = data;
+  const { setEdges } = useReactFlow();
+
   const [collapsed, setCollapsed] = useState(false);
   const [showTriggers, setShowTriggers] = useState(true);
   const [draggingIdx, setDraggingIdx] = useState(null);
@@ -271,9 +273,16 @@ export default function AggregateEntityNode({ id, data, selected }) {
 
   const removeField = useCallback(
     (idx) => {
+      const field = fields[idx];
+      const handleId = `field-${field?.name || idx}`;
+      // Remove edges connected to this field's handle before deleting the field,
+      // so wires don't dangle after the port disappears.
+      setEdges((eds) => eds.filter(
+        (e) => !(e.target === id && e.targetHandle === handleId)
+      ));
       onChange({ fields: fields.filter((_, i) => i !== idx) });
     },
-    [fields, onChange]
+    [fields, id, onChange, setEdges]
   );
 
   // ── Drag-to-reorder ────────────────────────────────────────────────────────
