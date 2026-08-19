@@ -40,6 +40,10 @@ export function getKnownHandles(node) {
       if (data.hasSetupHandler) {
         outputs.add('event-setup');
       }
+      // block handler adds a virtual event-block port
+      if (data.hasBlockHandler) {
+        outputs.add('event-block');
+      }
       for (const fn of data.readFunctions ?? []) {
         outputs.add(`read-${fn.name}`);
       }
