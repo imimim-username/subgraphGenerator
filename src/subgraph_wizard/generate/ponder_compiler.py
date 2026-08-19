@@ -1266,31 +1266,48 @@ class PonderCompiler:
             out_name = source_handle[4:] if source_handle.startswith("out-") else source_handle
 
             # Detect whether this output is a tuple struct component.  When the
-            # read function returns a struct, viem returns a plain JS object; the
-            # compiler must emit ``result.fieldName`` rather than ``result``.
+            # read function returns a struct (single tuple output), viem returns
+            # a plain JS object with named keys.  When a function returns multiple
+            # flat outputs, viem returns a plain JS *array* — named property access
+            # (``result.fieldName``) returns ``undefined`` at runtime even though
+            # TypeScript labels make it look valid.  We must use index-based access
+            # (``result[N]``) for multi-output flat functions.
             fn_outputs = fn.get("outputs", [])
             out_entry = next(
                 (o for o in fn_outputs if o.get("name") == out_name), None
             )
-            # Treat the result as a tuple (access by field name) when:
-            #   a) the output is explicitly flagged as a struct component, OR
-            #   b) the function has multiple outputs — viem returns them as a
-            #      named array and we must access each field individually to
-            #      avoid passing the whole tuple where a scalar BigInt is expected.
-            is_tuple_component = bool(
-                (out_entry and out_entry.get("is_tuple_component"))
-                or len(fn_outputs) > 1
-            )
 
-            # Tuple components share a single readContract call keyed by the
-            # node id (no out_name suffix).  Non-tuple outputs keep the current
-            # per-name key so existing canvases are unaffected.
+            # Case A: single struct output flagged is_tuple_component — viem
+            #   returns a named JS object; use ``result.fieldName``.
+            # Case B: function has >1 flat outputs — viem returns a plain array;
+            #   use ``result[index]`` (index-based) to avoid undefined values.
+            is_explicit_struct = bool(out_entry and out_entry.get("is_tuple_component"))
+            is_multi_output = len(fn_outputs) > 1
+
+            # Tuple components and multi-output functions share a single
+            # readContract call keyed by the node id (no out_name suffix).
+            # Non-tuple single-output functions keep the per-name key so that
+            # existing canvases are unaffected.
+            is_tuple_component = is_explicit_struct or is_multi_output
             call_var = (
                 _var_name(source_node_id, "out")
                 if is_tuple_component
                 else _var_name(source_node_id, f"out_{out_name}")
             )
-            result_expr = f"{call_var}.{out_name}" if is_tuple_component else call_var
+
+            if is_multi_output:
+                # viem returns a plain array for multi-return functions.
+                # Use positional index to avoid ``undefined`` from named access.
+                out_index = next(
+                    (i for i, o in enumerate(fn_outputs) if o.get("name") == out_name),
+                    0,
+                )
+                result_expr = f"{call_var}[{out_index}]"
+            elif is_explicit_struct:
+                # Single struct output — viem returns a named object.
+                result_expr = f"{call_var}.{out_name}"
+            else:
+                result_expr = call_var
 
             if call_var not in declared_vars:
                 stmts.append(

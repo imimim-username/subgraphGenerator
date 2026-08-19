@@ -453,12 +453,17 @@ class TestContractRead:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         assert 'functionName: "balanceOf"' in src
 
-    def test_contractread_multi_output_accesses_named_fields(self):
-        """A function with multiple outputs (e.g. latestRoundData) must share one
-        readContract call and access individual fields by name (result.fieldName),
-        not pass the whole tuple as a scalar BigInt value.
+    def test_contractread_multi_output_accesses_by_index(self):
+        """A function with multiple flat outputs (e.g. latestRoundData) must share one
+        readContract call and access individual fields by positional index (result[N]),
+        NOT by name (result.fieldName).
 
-        Regression test for: 'Cannot convert A,B,C,D,E to a BigInt'
+        viem returns a plain JS array for multi-return functions; named property access
+        returns ``undefined`` at runtime even though TypeScript labels look valid.
+
+        Regression test for:
+          - 'Cannot convert A,B,C,D,E to a BigInt' (old: separate calls per output)
+          - null ContractRead values in GraphQL (old: .fieldName access on plain array)
         """
         read_fn = _read_fn("latestRoundData", outputs=[
             {"name": "roundId",         "solidity_type": "uint80",  "graph_type": "BigInt"},
@@ -492,12 +497,18 @@ class TestContractRead:
         src = compile_ponder(_cfg(nodes=nodes, edges=edges))["src/index.ts"]
         # One shared readContract call, not five separate ones
         assert src.count('functionName: "latestRoundData"') == 1
-        # Each field accessed by name on the result object
-        assert ".roundId"          in src
-        assert ".answer"           in src
-        assert ".startedAt"        in src
-        assert ".updatedAt"        in src
-        assert ".answeredInRound"  in src
+        # Each field accessed by positional index (NOT by name — viem returns a plain array)
+        assert "[0]" in src   # roundId
+        assert "[1]" in src   # answer
+        assert "[2]" in src   # startedAt
+        assert "[3]" in src   # updatedAt
+        assert "[4]" in src   # answeredInRound
+        # Must NOT use named property access (which returns undefined on a plain array)
+        assert ".roundId"          not in src
+        assert ".answer"           not in src
+        assert ".startedAt"        not in src
+        assert ".updatedAt"        not in src
+        assert ".answeredInRound"  not in src
 
 
 # ── Aggregate entity ───────────────────────────────────────────────────────────
