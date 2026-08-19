@@ -451,7 +451,7 @@ export default function ContractNode({ id, data, selected }) {
           )}
 
           {/* ── Event ports ── */}
-          {hasAbi && events.length > 0 && (
+          {hasAbi && (events.length > 0 || hasBlockHandler || hasSetupHandler) && (
             <>
               <div className="sg-node__divider" />
               <div
