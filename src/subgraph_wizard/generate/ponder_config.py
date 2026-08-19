@@ -144,10 +144,41 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     """
     networks_config: list[dict[str, Any]] = visual_config.get("networks", [])
     nodes: list[dict[str, Any]] = visual_config.get("nodes", [])
+    raw_edges: list[dict[str, Any]] = visual_config.get("edges", [])
     ponder_settings: dict[str, Any] = visual_config.get("ponder_settings", {})
 
     db_kind: str = ponder_settings.get("database", "pglite")
     ordering: str = ponder_settings.get("ordering", "multichain")
+
+    # ── Determine which contracts have event handlers ─────────────────────────
+    # A contract needs to appear in ponder.config.ts ``contracts:`` ONLY when
+    # at least one of its events is handled.  A block-only contract (one with
+    # ``hasBlockHandler: true`` but no event-handler wires) does NOT need a
+    # ``contracts:`` entry — only the ``blocks:`` entry it already gets.
+    #
+    # Including a contract in ``contracts:`` without handlers causes Ponder to
+    # scan all of its historical event logs before exposing any data via GraphQL.
+    # On a busy contract this can take hours and makes the GraphQL API return
+    # empty results until the full scan completes.
+    #
+    # Algorithm: build a lookup from node-id → contract-name; then walk all
+    # canvas edges.  Any edge whose sourceHandle starts with "event-" but is NOT
+    # "event-block" (which is the block-trigger pseudo-port) indicates an event
+    # handler exists for that contract.
+    _node_id_to_ct_name: dict[str, str] = {}
+    for _n in nodes:
+        if _n.get("type") == "contract":
+            _cname = _n.get("data", {}).get("name", "").strip()
+            if _cname:
+                _node_id_to_ct_name[_n["id"]] = _cname
+
+    contracts_with_event_handlers: set[str] = set()
+    for _e in raw_edges:
+        _sh = _e.get("sourceHandle", "")
+        if _sh.startswith("event-") and _sh != "event-block":
+            _src_ct = _node_id_to_ct_name.get(_e.get("source", ""))
+            if _src_ct:
+                contracts_with_event_handlers.add(_src_ct)
 
     # ── Collect unique network slugs in order of appearance ──────────────────
     seen_slugs: list[str] = []
@@ -292,9 +323,16 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
     abi_imports: list[str] = []
     for ct_name in sorted(seen_contract_types):
         nd = contract_node_data.get(ct_name, {})
-        # Emit when: canvas has this contract's node with ABI data, OR canvas
-        # has no contract nodes at all (old-style config without node data).
-        if nd.get("abi") or not has_canvas_contracts:
+        # Only emit an ABI import when the contract will actually appear in the
+        # ``contracts:`` section.  A block-only contract has no contracts: entry,
+        # so its ABI is not needed in ponder.config.ts (it is still imported in
+        # src/index.ts for readContract calls, but ponder.config.ts doesn't use it).
+        #
+        # Old-style configs with no canvas nodes fall back to including everything.
+        has_event_handlers = ct_name in contracts_with_event_handlers
+        if (nd.get("abi") or not has_canvas_contracts) and (
+            has_event_handlers or not has_canvas_contracts
+        ):
             abi_imports.append(
                 f'import {{ {ct_name}Abi }} from "./abis/{ct_name}Abi";'
             )
@@ -427,8 +465,14 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                     f"    }},"
                 )
 
-            inner = "".join(f"\n      {f}," for f in fields)
-            contract_lines.append(f"    {ct_name}: {{{inner}\n    }},")
+            # Only emit a contracts: entry when the contract has at least one
+            # event handler.  Block-only contracts don't need a contracts: entry
+            # (they already get a blocks: entry); including them here would make
+            # Ponder scan all historical logs and gate GraphQL data visibility
+            # until that scan finishes — potentially hours on active contracts.
+            if ct_name in contracts_with_event_handlers or not has_canvas_contracts:
+                inner = "".join(f"\n      {f}," for f in fields)
+                contract_lines.append(f"    {ct_name}: {{{inner}\n    }},")
 
         else:
             # ── Multi-chain format ───────────────────────────────────────────
@@ -501,10 +545,12 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
                 inner = "".join(f"\n          {f}," for f in per_chain)
                 chain_obj_lines.append(f"        {chain_name}: {{{inner}\n        }},")
 
-            top_str = "".join(f"\n      {f}," for f in top_fields)
-            chain_block = "\n".join(chain_obj_lines)
-            chain_obj = f"\n      chain: {{\n{chain_block}\n      }},"
-            contract_lines.append(f"    {ct_name}: {{{top_str}{chain_obj}\n    }},")
+            # Same gate as single-chain path: omit block-only contracts.
+            if ct_name in contracts_with_event_handlers or not has_canvas_contracts:
+                top_str = "".join(f"\n      {f}," for f in top_fields)
+                chain_block = "\n".join(chain_obj_lines)
+                chain_obj = f"\n      chain: {{\n{chain_block}\n      }},"
+                contract_lines.append(f"    {ct_name}: {{{top_str}{chain_obj}\n    }},")
 
     # ── Assemble file ─────────────────────────────────────────────────────────
     lines: list[str] = ['import { createConfig } from "ponder";']
@@ -530,9 +576,10 @@ def render_ponder_config(visual_config: dict[str, Any]) -> str:
         lines.append("  blocks: {")
         lines.extend(blocks_lines)
         lines.append("  },")
-    lines.append("  contracts: {")
-    lines.extend(contract_lines)
-    lines.append("  },")
+    if contract_lines:
+        lines.append("  contracts: {")
+        lines.extend(contract_lines)
+        lines.append("  },")
     lines.append("});")
     lines.append("")
 

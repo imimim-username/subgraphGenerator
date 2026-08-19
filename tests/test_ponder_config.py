@@ -9,14 +9,30 @@ def _cfg(
     networks=None,
     nodes=None,
     ponder_settings=None,
+    edges=None,
 ):
     return {
         "schema_version": 1,
         "subgraph_name": "test",
         "networks": networks or [],
         "nodes": nodes or [],
-        "edges": [],
+        "edges": edges or [],
         "ponder_settings": ponder_settings or {},
+    }
+
+
+def _event_edge(contract_node_id: str, event_name: str = "Transfer") -> dict:
+    """Return a canvas edge wiring a contract event port to a dummy entity trigger.
+
+    This signals to the config renderer that the contract *has* event handlers and
+    therefore deserves a ``contracts:`` entry in ponder.config.ts.
+    """
+    return {
+        "id": f"ev-{contract_node_id}-{event_name}",
+        "source": contract_node_id,
+        "sourceHandle": f"event-{event_name}",
+        "target": "entity-dummy",
+        "targetHandle": "trigger",
     }
 
 
@@ -271,6 +287,7 @@ class TestPerContractFlags:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", includeCallTraces=True)],
+            edges=[_event_edge("cn-Token")],
         ))
         assert "includeCallTraces: true" in out
 
@@ -278,6 +295,7 @@ class TestPerContractFlags:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", includeTransactionReceipts=True)],
+            edges=[_event_edge("cn-Token")],
         ))
         assert "includeTransactionReceipts: true" in out
 
@@ -285,6 +303,7 @@ class TestPerContractFlags:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", includeCallTraces=False, includeTransactionReceipts=False)],
+            edges=[_event_edge("cn-Token")],
         ))
         assert "includeCallTraces" not in out
         assert "includeTransactionReceipts" not in out
@@ -301,6 +320,7 @@ class TestPerContractFlags:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", includeCallTraces=True, includeTransactionReceipts=True)],
+            edges=[_event_edge("cn-Token")],
         ))
         assert "includeCallTraces: true" in out
         assert "includeTransactionReceipts: true" in out
@@ -454,6 +474,7 @@ class TestMultiNetworkAndFallback:
         """Contract nodes with no Networks panel entry appear as placeholders."""
         out = render_ponder_config(_cfg(
             nodes=[_contract_node("Orphan")],
+            edges=[_event_edge("cn-Orphan")],
         ))
         assert "Orphan:" in out
         assert "OrphanAbi" in out
@@ -480,6 +501,7 @@ class TestMultiNetworkAndFallback:
         out = render_ponder_config(_cfg(
             networks=[_net("mainnet", _contract_instances(_inst("0xDEAD", 14_000_000, endBlock=15_000_000)), pollingInterval=2000)],
             nodes=[_contract_node("Token", includeCallTraces=True)],
+            edges=[_event_edge("cn-Token")],
             ponder_settings={"database": "postgres", "ordering": "omnichain"},
         ))
         assert 'kind: "postgres"' in out
@@ -927,6 +949,7 @@ class TestStaleContractFiltering:
         cfg = _cfg(
             networks=[_net("mainnet", {"Token": {"instances": [_inst("0xBEEF")]}})],
             nodes=[self._node_with_abi("Token")],
+            edges=[_event_edge("cn-Token")],
         )
         out = render_ponder_config(cfg)
         assert 'import { TokenAbi } from "./abis/TokenAbi"' in out
@@ -960,6 +983,7 @@ class TestStaleContractFiltering:
             networks=[_net("mainnet", {"Ghost": {"instances": [_inst("0x111")]},
                                        "Real": {"instances": [_inst("0x222")]}})],
             nodes=[self._node_with_abi("Real")],
+            edges=[_event_edge("cn-Real")],
         )
         out = render_ponder_config(cfg)
         # Ghost must not appear anywhere in the config
@@ -981,6 +1005,7 @@ class TestStaleContractFiltering:
                 "Deleted": {"instances": [_inst("0x222")]},
             })],
             nodes=[self._node_with_abi("Survivor")],  # only Survivor on canvas
+            edges=[_event_edge("cn-Survivor")],
         )
         out = render_ponder_config(cfg)
         assert "Deleted" not in out
@@ -993,6 +1018,7 @@ class TestStaleContractFiltering:
         cfg = _cfg(
             networks=[],   # no networks panel data at all
             nodes=[self._node_with_abi("Lone")],
+            edges=[_event_edge("cn-Lone")],
         )
         out = render_ponder_config(cfg)
         # The contract should appear in the contracts block (with placeholder address)
@@ -1139,6 +1165,7 @@ class TestBlockHandler:
             networks=[_net("mainnet", _contract_instances(_inst()))],
             nodes=[_contract_node("Token", hasBlockHandler=True, blockInterval=50,
                                   includeCallTraces=True)],
+            edges=[_event_edge("cn-Token")],
         ))
         assert "  blocks: {" in out
         assert "interval: 50," in out

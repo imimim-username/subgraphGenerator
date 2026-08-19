@@ -369,6 +369,7 @@ def _ponder_payload(
     *,
     nodes=None,
     networks=None,
+    edges=None,
     extra=None,
     tmp_path=None,
 ):
@@ -379,12 +380,23 @@ def _ponder_payload(
         "output_mode": "ponder",
         "networks": networks or [],
         "nodes": nodes or [],
-        "edges": [],
+        "edges": edges or [],
         "ponder_settings": {},
     }
     if extra:
         payload.update(extra)
     return payload
+
+
+def _event_edge(contract_node_id: str, event_name: str = "Transfer") -> dict:
+    """Return a canvas edge that signals a contract has event handlers."""
+    return {
+        "id": f"ev-{contract_node_id}-{event_name}",
+        "source": contract_node_id,
+        "sourceHandle": f"event-{event_name}",
+        "target": "entity-dummy",
+        "targetHandle": "trigger",
+    }
 
 
 def _contract_node(name, abi=None):
@@ -461,13 +473,16 @@ class TestPonderStaleAbiCleanup:
 
     def test_ponder_config_does_not_import_deleted_contract(self, tmp_path):
         """After the deletion, ponder.config.ts must not import the stale ABI."""
-        payload_v1 = _ponder_payload(nodes=[
-            _contract_node("Token"),
-            _contract_node("Ghost"),
-        ])
+        payload_v1 = _ponder_payload(
+            nodes=[_contract_node("Token"), _contract_node("Ghost")],
+            edges=[_event_edge("cn-Token"), _event_edge("cn-Ghost")],
+        )
         client.post("/api/generate", json=payload_v1, params={"dir": str(tmp_path)})
 
-        payload_v2 = _ponder_payload(nodes=[_contract_node("Token")])
+        payload_v2 = _ponder_payload(
+            nodes=[_contract_node("Token")],
+            edges=[_event_edge("cn-Token")],
+        )
         client.post("/api/generate", json=payload_v2, params={"dir": str(tmp_path)})
 
         config_text = (tmp_path / "ponder.config.ts").read_text()

@@ -426,7 +426,8 @@ class TestAdvancedPonderSettings:
             _net_entry("mainnet", "ERC20", "0xAAA", start_block=14_000_000,
                        end_block=15_000_000, pollingInterval=2000, ethGetLogsBlockRange=500),
         ]
-        return _full_cfg(nodes, [], networks=networks,
+        edges = [_edge("e-c1-Transfer", "c1", "event-Transfer", "dummy-entity", "trigger")]
+        return _full_cfg(nodes, edges, networks=networks,
                          ponder_settings={"database": "postgres", "ordering": "omnichain"})
 
     def test_postgres_database_block(self, cfg):
@@ -492,7 +493,8 @@ class TestMultiNetworkSameContract:
             _net_entry("mainnet", "Token", "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 14_000_000),
             _net_entry("optimism", "Token", "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", 1_000_000),
         ]
-        return _full_cfg(nodes, [], networks=networks)
+        edges = [_edge("e-c1-Transfer", "c1", "event-Transfer", "dummy-entity", "trigger")]
+        return _full_cfg(nodes, edges, networks=networks)
 
     def test_both_chains_in_config(self, cfg):
         config = render_ponder_config(cfg)
@@ -541,7 +543,8 @@ class TestOrphanContract:
         ]
         # Only mainnet configured in networks, but no entry for "Orphan"
         networks = [_net_entry("mainnet", "OtherContract", "0xCCC")]
-        return _full_cfg(nodes, [], networks=networks)
+        edges = [_edge("e-c1-Transfer", "c1", "event-Transfer", "dummy-entity", "trigger")]
+        return _full_cfg(nodes, edges, networks=networks)
 
     def test_orphan_contract_still_in_config(self, cfg):
         config = render_ponder_config(cfg)
